@@ -1,0 +1,174 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TikTok Overlay | SONG SOD Donate</title>
+<link href="https://fonts.googleapis.com/css2?family=Kanit:wght@600;800&display=swap" rel="stylesheet">
+<style>
+  /* พื้นหลังโปร่งใส — ใส่ใน TikTok LIVE Studio / OBS (แนะนำ 800x600) */
+  html,body{margin:0;height:100%;background:transparent;overflow:hidden;font-family:'Kanit',sans-serif}
+  [hidden]{display:none!important}
+
+  /* ป้ายคอมเมนต์ (มุมล่างซ้าย) */
+  .chat{position:absolute;left:16px;bottom:16px;max-width:calc(100% - 32px);background:#000b;border-radius:16px;
+    padding:10px 16px;color:#fff;font-size:26px;line-height:1.35;opacity:0;transform:translateY(20px);transition:.3s;
+    border-left:6px solid #5ab0ff;word-break:break-word}
+  .chat.show{opacity:1;transform:none}
+  .chat .n{color:#5ab0ff;font-weight:800;margin-right:6px}
+
+  /* ป้ายขอบคุณผู้ติดตาม (ตรงกลาง) */
+  .follow{position:absolute;left:50%;top:40%;transform:translate(-50%,-50%) scale(.6);opacity:0;
+    transition:opacity .35s,transform .35s cubic-bezier(.2,1.6,.4,1);text-align:center;width:90%}
+  .follow.show{opacity:1;transform:translate(-50%,-50%) scale(1)}
+  .follow .heart{font-size:90px;line-height:1;display:inline-block;animation:beat .8s infinite}
+  @keyframes beat{0%,100%{transform:scale(1)}50%{transform:scale(1.15)}}
+  .follow .t{font-size:40px;font-weight:800;color:#fff;text-shadow:0 0 6px #000,0 3px 0 #000,0 0 18px #ff4f9a}
+  .follow .t b{color:#ffd23f}
+
+  .unlock{position:fixed;top:12px;left:50%;transform:translateX(-50%);background:#000c;color:#fff;
+    padding:10px 16px;border-radius:12px;font-size:16px;cursor:pointer;display:none}
+  .status{position:fixed;top:6px;left:8px;font:12px sans-serif;color:#fff8;text-shadow:0 0 3px #000}
+</style>
+</head>
+<body>
+<div class="chat" id="chat"><span class="n" id="cName"></span><span id="cText"></span></div>
+<div class="follow" id="follow"><span class="heart">💖</span><div class="t" id="fText"></div></div>
+<div class="unlock" id="unlock">🔊 คลิกเพื่อเปิดเสียง (ไม่ต้องทำใน LIVE Studio / OBS)</div>
+<div class="status" id="status"></div>
+
+<script>
+// SONG SOD TikTok Overlay — v1.2.0
+// ?show=chat        อ่านเฉพาะคอมเมนต์
+// ?show=follow      ขอบคุณเฉพาะคนกดติดตาม
+// (ไม่ใส่ = ทั้งสองอย่าง)   ?vol=0.8  ?debug  ?nobox (อ่านอย่างเดียว ไม่โชว์ป้าย)
+const params = new URLSearchParams(location.search);
+const SHOW = (params.get('show') || 'chat,follow').split(',');
+const VOLUME = Math.min(1, Number(params.get('vol') || 0.8));
+const NOBOX = params.has('nobox');
+const MAX_CHAT_QUEUE = 6;           // คอมเมนต์รอคิวได้ไม่เกิน 6 อัน (เก่าสุดถูกตัดทิ้ง)
+const DONATE_HOLD_MS = 12000;       // มีโดเนทเข้า → หยุดอ่านคอมเมนต์ชั่วคราว ไม่ให้เสียงทับกัน
+
+const $ = id => document.getElementById(id);
+const queue = [];
+let busy = false;
+let holdUntil = 0;
+
+// ---------- เสียง ----------
+const AC = window.AudioContext || window.webkitAudioContext;
+const ctx = AC ? new AC() : null;
+if (ctx && ctx.state === 'suspended') $('unlock').style.display = 'block';
+$('unlock').onclick = () => { ctx && ctx.resume(); $('unlock').style.display = 'none'; };
+
+function ding(high) {
+  if (!ctx) return;
+  const notes = high ? [988, 1319, 1568] : [880];
+  notes.forEach((f, i) => {
+    const o = ctx.createOscillator(), g = ctx.createGain();
+    o.type = 'sine'; o.frequency.value = f;
+    const t = ctx.currentTime + i * 0.1;
+    g.gain.setValueAtTime(0, t);
+    g.gain.linearRampToValueAtTime(0.18 * VOLUME, t + 0.02);
+    g.gain.exponentialRampToValueAtTime(0.001, t + 0.4);
+    o.connect(g).connect(ctx.destination);
+    o.start(t); o.stop(t + 0.45);
+  });
+}
+
+function playUrl(url) {
+  return new Promise((resolve, reject) => {
+    const a = new Audio(url);
+    a.volume = VOLUME;
+    a.onended = resolve;
+    a.onerror = reject;
+    a.play().catch(reject);
+    setTimeout(resolve, 20000);
+  });
+}
+
+function speakBrowser(text) {
+  return new Promise(resolve => {
+    if (!('speechSynthesis' in window)) return resolve();
+    const u = new SpeechSynthesisUtterance(text);
+    u.lang = 'th-TH'; u.volume = VOLUME;
+    const th = speechSynthesis.getVoices().find(v => v.lang && v.lang.startsWith('th'));
+    if (th) u.voice = th;
+    u.onend = u.onerror = resolve;
+    speechSynthesis.speak(u);
+    setTimeout(resolve, 20000);
+  });
+}
+
+async function speak(item) {
+  try { await playUrl('/tts/' + item.id); }
+  catch { await speakBrowser(item.speech); }
+}
+
+const wait = ms => new Promise(r => setTimeout(r, ms));
+
+// ---------- แสดงผล ----------
+async function showChat(item) {
+  if (!NOBOX) {
+    $('cName').textContent = item.name;
+    $('cText').textContent = item.text;
+    $('chat').classList.add('show');
+  }
+  await speak(item);
+  await wait(600);
+  $('chat').classList.remove('show');
+  await wait(300);
+}
+
+async function showFollow(item) {
+  if (!NOBOX) {
+    $('fText').innerHTML = '';
+    const b = document.createElement('b'); b.textContent = item.name;
+    $('fText').append('ขอบคุณ ', b, ' ที่กดติดตาม!');
+    $('follow').classList.add('show');
+  }
+  ding(true);
+  await wait(500);
+  await speak(item);
+  await wait(1200);
+  $('follow').classList.remove('show');
+  await wait(400);
+}
+
+async function run() {
+  if (busy) return;
+  busy = true;
+  while (queue.length) {
+    const left = holdUntil - Date.now();
+    if (left > 0) { await wait(Math.min(left, 1000)); continue; }   // รอโดเนทเด้งเสร็จก่อน
+    const item = queue.shift();
+    if (item.type === 'follow') await showFollow(item);
+    else await showChat(item);
+  }
+  busy = false;
+}
+
+function enqueue(type, item) {
+  item.type = type;
+  if (type === 'follow') {
+    // ขอบคุณผู้ติดตามได้คิวก่อนคอมเมนต์
+    const i = queue.findIndex(q => q.type !== 'follow');
+    i === -1 ? queue.push(item) : queue.splice(i, 0, item);
+  } else {
+    queue.push(item);
+    const chats = queue.filter(q => q.type === 'chat');
+    if (chats.length > MAX_CHAT_QUEUE) queue.splice(queue.indexOf(chats[0]), 1);
+  }
+  run();
+}
+
+// ---------- เชื่อมเซิร์ฟเวอร์ ----------
+function status(t) { if (params.has('debug')) $('status').textContent = t; }
+const es = new EventSource('/events');
+es.onopen = () => status('● connected');
+es.onerror = () => status('○ reconnecting…');
+if (SHOW.includes('chat')) es.addEventListener('chat', e => enqueue('chat', JSON.parse(e.data)));
+if (SHOW.includes('follow')) es.addEventListener('follow', e => enqueue('follow', JSON.parse(e.data)));
+es.addEventListener('donate', () => { holdUntil = Date.now() + DONATE_HOLD_MS; });
+</script>
+</body>
+</html>

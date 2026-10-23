@@ -39,13 +39,20 @@
   .paid{color:var(--ok);font-size:12px;font-weight:600}
   .wait{color:var(--muted);font-size:12px}
   .count{display:inline-block;min-width:22px;text-align:center;background:var(--pink);color:#fff;border-radius:99px;font-size:12px;padding:1px 6px;margin-left:6px}
+  .ttstat{display:flex;align-items:center;gap:8px;font-size:14px;margin-bottom:6px}
+  .dot{width:10px;height:10px;border-radius:50%;background:var(--muted);flex:none}
+  .dot.live{background:var(--ok);box-shadow:0 0 8px var(--ok)}
+  .dot.connecting,.dot.retry{background:var(--yellow)}
+  .dot.error{background:var(--err)}
+  .sw{display:flex;align-items:center;gap:8px;margin-top:10px;font-size:14px;cursor:pointer}
+  .sw input{width:auto;accent-color:var(--pink);transform:scale(1.3)}
   .tag{font-size:11px;padding:1px 6px;border-radius:6px;background:#ffffff14;color:var(--muted);margin-left:4px}
 </style>
 </head>
 <body>
 <div class="wrap">
   <h1>⚙️ แอดมินโดเนท</h1>
-  <div class="sub">SONG SOD Donate <span id="ver">v1.1.0</span> · Overlay ที่เปิดอยู่: <span id="ov">-</span></div>
+  <div class="sub">SONG SOD Donate <span id="ver">v1.2.0</span> · Overlay ที่เปิดอยู่: <span id="ov">-</span></div>
 
   <div class="card">
     <h2>1. รหัสแอดมิน</h2>
@@ -65,6 +72,30 @@
     <div class="url"><input id="uDonate" readonly><button class="ghost" data-copy="uDonate">คัดลอก</button></div>
     <label>ลิงก์ Overlay (ใส่ใน TikTok LIVE Studio → Link Source หรือ OBS)</label>
     <div class="url"><input id="uOverlay" readonly><button class="ghost" data-copy="uOverlay">คัดลอก</button></div>
+    <label>ลิงก์อ่านคอมเมนต์ TikTok</label>
+    <div class="url"><input id="uChat" readonly><button class="ghost" data-copy="uChat">คัดลอก</button></div>
+    <label>ลิงก์ขอบคุณคนกดติดตาม</label>
+    <div class="url"><input id="uFollow" readonly><button class="ghost" data-copy="uFollow">คัดลอก</button></div>
+    <div class="note">ใส่แต่ละลิงก์เป็น Link Source แยกกัน หรือใช้ลิงก์รวม <code>/tiktok.html</code> อันเดียวก็ได้</div>
+  </div>
+
+  <div class="card">
+    <h2>🎵 TikTok LIVE</h2>
+    <div class="ttstat"><span class="dot" id="ttDot"></span><span id="ttStatus">ยังไม่เชื่อมต่อ</span></div>
+    <div class="note" id="ttErr" style="margin-top:0"></div>
+    <label>ชื่อผู้ใช้ TikTok (ไม่ต้องใส่ @)</label>
+    <input id="ttUser" placeholder="เช่น del.songsod">
+    <div class="row">
+      <button class="pink" id="ttConnect">เชื่อมต่อ</button>
+      <button class="ghost" id="ttDisconnect">หยุด</button>
+    </div>
+    <label class="sw"><input type="checkbox" id="ttChat"> อ่านคอมเมนต์ออกเสียง</label>
+    <label class="sw"><input type="checkbox" id="ttFollow"> ขอบคุณคนกดติดตาม</label>
+    <div class="row">
+      <button class="ghost" id="ttTestChat">💬 ทดสอบคอมเมนต์</button>
+      <button class="ghost" id="ttTestFollow">💖 ทดสอบติดตาม</button>
+    </div>
+    <div class="note">กดเชื่อมต่อได้ตั้งแต่ก่อนไลฟ์ ระบบจะลองต่อใหม่เองทุก 1–2 นาทีจนกว่าจะเริ่มไลฟ์ · อ่านแล้ว <span id="ttCount">0</span> คอมเมนต์ / <span id="ttFCount">0</span> ผู้ติดตาม</div>
   </div>
 
   <div class="card">
@@ -97,6 +128,8 @@ $('key').onchange = () => store.set('ssd_admin_key', $('key').value);
 
 $('uDonate').value = location.origin + '/donate.html';
 $('uOverlay').value = location.origin + '/overlay.html';
+$('uChat').value = location.origin + '/tiktok.html?show=chat';
+$('uFollow').value = location.origin + '/tiktok.html?show=follow';
 
 fetch('/api/config').then(r => r.json()).then(c => {
   $('ver').textContent = c.version + (c.testMode ? ' (โหมดทดสอบ)' : ' (PromptPay)');
@@ -191,6 +224,48 @@ $('pList').onclick = async e => {
 $('key').addEventListener('change', () => { loadPending(); load(); });
 loadPending();
 setInterval(loadPending, 5000);
+
+// ---------- TikTok LIVE ----------
+const TT_TEXT = { off: 'ยังไม่เชื่อมต่อ', connecting: 'กำลังเชื่อมต่อ…', live: 'เชื่อมต่อไลฟ์แล้ว ✅', retry: 'รอไลฟ์ / กำลังลองใหม่…', error: 'มีปัญหา' };
+let ttUserTouched = false;
+$('ttUser').oninput = () => { ttUserTouched = true; };
+
+async function loadTikTok() {
+  if (!$('key').value) return;
+  try {
+    const j = await api('/api/tiktok/status');
+    $('ttDot').className = 'dot ' + j.status;
+    $('ttStatus').textContent = TT_TEXT[j.status] + (j.username && j.status !== 'off' ? ' · @' + j.username : '');
+    $('ttErr').textContent = j.error || '';
+    if (!ttUserTouched && j.username) $('ttUser').value = j.username;
+    $('ttChat').checked = j.readChat;
+    $('ttFollow').checked = j.readFollow;
+    $('ttCount').textContent = j.counts.chat;
+    $('ttFCount').textContent = j.counts.follow;
+  } catch {}
+}
+
+$('ttConnect').onclick = async () => {
+  try {
+    await api('/api/tiktok/connect', { method: 'POST', body: JSON.stringify({ username: $('ttUser').value }) });
+    ttUserTouched = false; toast('กำลังเชื่อมต่อ…'); setTimeout(loadTikTok, 600);
+  } catch (e) { toast(e.message); }
+};
+$('ttDisconnect').onclick = async () => { try { await api('/api/tiktok/disconnect', { method: 'POST' }); toast('หยุดแล้ว'); loadTikTok(); } catch (e) { toast(e.message); } };
+
+async function ttSettings() {
+  try { await api('/api/tiktok/settings', { method: 'POST', body: JSON.stringify({ readChat: $('ttChat').checked, readFollow: $('ttFollow').checked }) }); toast('บันทึกแล้ว'); }
+  catch (e) { toast(e.message); }
+}
+$('ttChat').onchange = ttSettings;
+$('ttFollow').onchange = ttSettings;
+
+$('ttTestChat').onclick = async () => { try { await api('/api/tiktok/test', { method: 'POST', body: JSON.stringify({ type: 'chat', name: 'คนดูทดสอบ', text: 'สวัสดีค่ะ ไลฟ์สนุกมาก' }) }); toast('ส่งคอมเมนต์ทดสอบแล้ว'); } catch (e) { toast(e.message); } };
+$('ttTestFollow').onclick = async () => { try { await api('/api/tiktok/test', { method: 'POST', body: JSON.stringify({ type: 'follow', name: 'คนดูทดสอบ' }) }); toast('ส่งติดตามทดสอบแล้ว'); } catch (e) { toast(e.message); } };
+
+$('key').addEventListener('change', loadTikTok);
+loadTikTok();
+setInterval(loadTikTok, 5000);
 </script>
 </body>
 </html>

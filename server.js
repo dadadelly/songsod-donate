@@ -1,7 +1,8 @@
-// SONG SOD Donate — v1.1.0
+// SONG SOD Donate — v1.2.0
 // หน้าโดเนท + Overlay แจ้งเตือนแบบเรียลไทม์ (Server-Sent Events)
 // v1.1 = QR PromptPay ของเราเอง + แอดมินกดอนุมัติก่อนเด้ง
 //        (ถ้ายังไม่ตั้ง PROMPTPAY_ID จะเป็นโหมดทดสอบเหมือน v1.0)
+// v1.2 = ต่อ TikTok LIVE: อ่านคอมเมนต์ + ขอบคุณคนกดติดตาม (overlay: /tiktok.html)
 // ใช้ Node ล้วน ไม่ต้อง npm install
 
 const http = require('http');
@@ -11,7 +12,7 @@ const crypto = require('crypto');
 const QRCode = require('./vendor/QRCode');                       // ตัวสร้าง QR (MIT)
 const QRErrorCorrectLevel = require('./vendor/QRCode/QRErrorCorrectLevel');
 
-const VERSION = 'v1.1.0';
+const VERSION = 'v1.2.0';
 const PORT = process.env.PORT || 3000;
 const ADMIN_KEY = process.env.ADMIN_KEY || 'changeme';
 // เบอร์โทร (10 หลัก) / เลขบัตรประชาชน (13 หลัก) / e-Wallet ID (15 หลัก) ที่ผูก PromptPay
@@ -50,8 +51,12 @@ const ttsText = new Map();       // id -> ข้อความที่จะ�
 function remember(d) {
   recent.unshift(d);
   if (recent.length > 50) recent.pop();
-  ttsText.set(d.id, d.speech);
-  if (ttsText.size > 100) ttsText.delete(ttsText.keys().next().value);
+  addTts(d.id, d.speech);
+}
+
+function addTts(id, speech) {
+  ttsText.set(id, speech);
+  if (ttsText.size > 300) ttsText.delete(ttsText.keys().next().value);
 }
 
 // ---------- PromptPay QR (มาตรฐาน EMVCo / Thai QR) ----------
@@ -98,6 +103,111 @@ setInterval(() => {
   const t = Date.now();
   for (const [k, v] of pending) if (t - v.at > PENDING_TTL) pending.delete(k);
 }, 60000);
+
+// ---------- TikTok LIVE: อ่านคอมเมนต์ + ขอบคุณคนกดติดตาม ----------
+// ใช้ tiktok-live-connector (ไม่ใช่ API ทางการของ TikTok — TikTok เปลี่ยนระบบเมื่อไหร่อาจใช้ไม่ได้ชั่วคราว)
+const TIKTOK_USERNAME = String(process.env.TIKTOK_USERNAME || '').trim().replace(/^@/, '');
+const EULER_API_KEY = process.env.EULER_API_KEY || '';       // ไม่ใส่ก็ได้ ใส่แล้วโดนจำกัดน้อยลง
+const FOLLOW_TEXT = process.env.FOLLOW_TEXT || 'ขอบคุณ {name} ที่กดติดตามนะคะ';
+const CHAT_TEXT = process.env.CHAT_TEXT || '{name} บอกว่า {text}';
+const CHAT_COOLDOWN = Number(process.env.CHAT_COOLDOWN || 8) * 1000; // คนเดิมพิมพ์รัว ๆ อ่านแค่ทุก 8 วิ
+const RETRY_MS = 90 * 1000;
+
+const tt = {
+  conn: null, username: TIKTOK_USERNAME, status: 'off', error: '', roomId: null,
+  readChat: process.env.READ_CHAT !== 'false', readFollow: process.env.READ_FOLLOW !== 'false',
+  wantOn: false, retry: null, followed: new Set(), lastChat: new Map(), counts: { chat: 0, follow: 0 }
+};
+setInterval(() => { const t = Date.now(); for (const [k, v] of tt.lastChat) if (t - v > 60000) tt.lastChat.delete(k); }, 60000);
+
+const fillText = (tpl, name, text = '') => tpl.replace(/\{name\}/g, name).replace(/\{text\}/g, text);
+const speakable = t => t.replace(/\*+|\[ลิงก์\]/g, ' ').replace(/\s+/g, ' ').trim();
+
+function emitSpeech(type, name, text, speech) {
+  const id = crypto.randomUUID();
+  speech = speakable(speech);
+  addTts(id, speech);
+  broadcast(type, { id, name, text, speech, at: new Date().toISOString() });
+}
+
+function onChat(data) {
+  if (!tt.readChat) return;
+  const uid = String(data?.user?.uniqueId || '');
+  const now = Date.now();
+  if (now - (tt.lastChat.get(uid) || 0) < CHAT_COOLDOWN) return;
+  const name = cleanText(data?.user?.nickname || uid, 30) || 'ใครสักคน';
+  const text = cleanText(data?.comment, 100);
+  if (!speakable(text)) return;                     // ไม่มีอะไรให้อ่าน (เช่น มีแต่คำหยาบ/ลิงก์)
+  tt.lastChat.set(uid, now);
+  tt.counts.chat++;
+  emitSpeech('chat', name, text, fillText(CHAT_TEXT, name, text));
+}
+
+function onFollow(data) {
+  if (!tt.readFollow) return;
+  const uid = String(data?.user?.uniqueId || '');
+  if (uid && tt.followed.has(uid)) return;          // คนเดิมกดซ้ำในไลฟ์เดียวกัน ขอบคุณครั้งเดียว
+  if (uid) tt.followed.add(uid);
+  const name = cleanText(data?.user?.nickname || uid, 30) || 'ใครสักคน';
+  tt.counts.follow++;
+  emitSpeech('follow', name, '', fillText(FOLLOW_TEXT, name));
+}
+
+function friendlyError(e) {
+  const msg = String(e?.message || e || '');
+  if (/offline|not live|ended|LIVE has ended|isn't online|UserOffline/i.test(msg)) return 'ยังไม่ได้เริ่มไลฟ์ — เริ่มไลฟ์แล้วระบบจะต่อเองภายใน 1–2 นาที';
+  if (/429|rate/i.test(msg)) return 'เชื่อมต่อบ่อยเกินไป รอสักครู่ (หรือใส่ EULER_API_KEY)';
+  if (/not found|user_not_found|19881007/i.test(msg)) return 'ไม่พบชื่อผู้ใช้นี้ เช็ก @username อีกครั้ง';
+  return 'เชื่อมต่อไม่สำเร็จ: ' + msg.slice(0, 120);
+}
+
+function scheduleRetry() {
+  clearTimeout(tt.retry);
+  if (tt.wantOn) tt.retry = setTimeout(() => ttConnect(tt.username), RETRY_MS);
+}
+
+function ttDisconnect(stop = true) {
+  if (stop) { tt.wantOn = false; tt.status = 'off'; tt.error = ''; tt.roomId = null; }
+  clearTimeout(tt.retry);
+  const c = tt.conn;
+  tt.conn = null;
+  if (c) { try { c.disconnect(); } catch {} }
+}
+
+async function ttConnect(username) {
+  username = String(username || '').trim().replace(/^@/, '');
+  if (!username) { tt.status = 'error'; tt.error = 'ยังไม่ได้ใส่ชื่อผู้ใช้ TikTok'; return; }
+  ttDisconnect(false);
+  Object.assign(tt, { username, wantOn: true, status: 'connecting', error: '', roomId: null });
+
+  let mod;
+  try { mod = await import('tiktok-live-connector'); }
+  catch { tt.status = 'error'; tt.error = 'ยังไม่ได้ติดตั้ง tiktok-live-connector (Build Command ต้องเป็น npm install)'; tt.wantOn = false; return; }
+
+  const Conn = mod.TikTokLiveConnection || mod.default?.TikTokLiveConnection;
+  const EV = mod.WebcastEvent || mod.default?.WebcastEvent || {};
+  const conn = new Conn(username, EULER_API_KEY ? { signApiKey: EULER_API_KEY } : {});
+  tt.conn = conn;
+  conn.on(EV.CHAT || 'chat', onChat);
+  conn.on(EV.FOLLOW || 'follow', onFollow);
+  conn.on('error', e => console.error('[tiktok]', e?.message || e));
+  conn.on('disconnected', () => {
+    if (tt.conn !== conn) return;
+    tt.conn = null; tt.status = 'retry'; tt.error = 'หลุดการเชื่อมต่อ กำลังลองใหม่…';
+    scheduleRetry();
+  });
+
+  try {
+    const st = await conn.connect();
+    if (tt.conn !== conn) return;
+    tt.status = 'live'; tt.roomId = st?.roomId || null; tt.followed.clear();
+    console.log('[tiktok] connected @' + username, tt.roomId);
+  } catch (e) {
+    if (tt.conn !== conn) return;
+    tt.conn = null; tt.status = 'retry'; tt.error = friendlyError(e);
+    scheduleRetry();
+  }
+}
 
 // ---------- ส่งสัญญาณไป Overlay (SSE) ----------
 const clients = new Set();
@@ -232,7 +342,7 @@ const server = http.createServer(async (req, res) => {
     }
 
     // ---- แอดมิน ----
-    if (['/api/test', '/api/skip', '/api/recent', '/api/pending', '/api/approve', '/api/reject'].includes(pathname)) {
+    if (['/api/test', '/api/skip', '/api/recent', '/api/pending', '/api/approve', '/api/reject'].includes(pathname) || pathname.startsWith('/api/tiktok/')) {
       if (!isAdmin(req)) return json(res, 401, { ok: false, error: 'รหัสแอดมินไม่ถูกต้อง' });
 
       if (m === 'POST' && pathname === '/api/test') {
@@ -248,6 +358,36 @@ const server = http.createServer(async (req, res) => {
       }
       if (m === 'POST' && pathname === '/api/skip') { broadcast('skip', {}); return json(res, 200, { ok: true }); }
       if (m === 'GET' && pathname === '/api/recent') return json(res, 200, { ok: true, items: recent, overlays: clients.size });
+
+      // ---- TikTok LIVE ----
+      if (m === 'GET' && pathname === '/api/tiktok/status') {
+        const { username, status, error, roomId, readChat, readFollow, counts } = tt;
+        return json(res, 200, { ok: true, username, status, error, roomId, readChat, readFollow, counts });
+      }
+      if (m === 'POST' && pathname === '/api/tiktok/connect') {
+        const b = await readBody(req);
+        ttConnect(b.username || tt.username);          // ไม่ต้องรอ ให้หน้า admin เช็กสถานะเอง
+        return json(res, 200, { ok: true });
+      }
+      if (m === 'POST' && pathname === '/api/tiktok/disconnect') { ttDisconnect(true); return json(res, 200, { ok: true }); }
+      if (m === 'POST' && pathname === '/api/tiktok/settings') {
+        const b = await readBody(req);
+        if (typeof b.readChat === 'boolean') tt.readChat = b.readChat;
+        if (typeof b.readFollow === 'boolean') tt.readFollow = b.readFollow;
+        return json(res, 200, { ok: true, readChat: tt.readChat, readFollow: tt.readFollow });
+      }
+      if (m === 'POST' && pathname === '/api/tiktok/test') {
+        const b = await readBody(req);
+        if (b.type === 'follow') {
+          const name = cleanText(b.name, 30) || 'คนดูทดสอบ';
+          emitSpeech('follow', name, '', fillText(FOLLOW_TEXT, name));
+        } else {
+          const name = cleanText(b.name, 30) || 'คนดูทดสอบ';
+          const text = cleanText(b.text, 100) || 'สวัสดีค่ะ';
+          emitSpeech('chat', name, text, fillText(CHAT_TEXT, name, text));
+        }
+        return json(res, 200, { ok: true });
+      }
 
       // รายการรออนุมัติ (แจ้งโอนแล้วขึ้นก่อน)
       if (m === 'GET' && pathname === '/api/pending') {
@@ -267,7 +407,7 @@ const server = http.createServer(async (req, res) => {
       }
     }
 
-    // อ่านข้อความเป็นเสียงไทย (ได้เฉพาะข้อความของโดเนทที่เกิดขึ้นจริง)
+    // อ่านข้อความเป็นเสียงไทย (ได้เฉพาะข้อความที่ระบบสร้างเอง)
     if (m === 'GET' && pathname.startsWith('/tts/')) {
       const text = ttsText.get(pathname.slice(5));
       if (!text) { res.writeHead(404); return res.end(); }
@@ -301,5 +441,6 @@ const server = http.createServer(async (req, res) => {
 
 server.listen(PORT, () => {
   console.log(`SONG SOD Donate ${VERSION} running on :${PORT}  (${TEST_MODE ? 'testMode' : 'PromptPay mode'})`);
+  if (TIKTOK_USERNAME) ttConnect(TIKTOK_USERNAME);   // มีชื่อ TikTok ใน Render → ต่อเองอัตโนมัติ
   if (ADMIN_KEY === 'changeme') console.log('⚠️  ตั้ง ADMIN_KEY ก่อนขึ้นออนไลน์จริงนะ');
 });

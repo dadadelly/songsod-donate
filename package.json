@@ -1,6 +1,6 @@
 {
   "name": "songsod-donate",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "SONG SOD Donate — หน้าโดเนท + Overlay แจ้งเตือน (GIF + เพลง + อ่านข้อความ)",
   "main": "server.js",
   "scripts": {
@@ -8,5 +8,8 @@
   },
   "engines": {
     "node": ">=18"
+  },
+  "dependencies": {
+    "tiktok-live-connector": "^2.4.4"
   }
 }
