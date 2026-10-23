@@ -1,6 +1,6 @@
 {
   "name": "songsod-donate",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "SONG SOD Donate — หน้าโดเนท + Overlay แจ้งเตือน (GIF + เพลง + อ่านข้อความ)",
   "main": "server.js",
   "scripts": {

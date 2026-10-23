@@ -1,8 +1,9 @@
-// SONG SOD Donate — v1.2.0
+// SONG SOD Donate — v1.2.1
 // หน้าโดเนท + Overlay แจ้งเตือนแบบเรียลไทม์ (Server-Sent Events)
 // v1.1 = QR PromptPay ของเราเอง + แอดมินกดอนุมัติก่อนเด้ง
 //        (ถ้ายังไม่ตั้ง PROMPTPAY_ID จะเป็นโหมดทดสอบเหมือน v1.0)
 // v1.2 = ต่อ TikTok LIVE: อ่านคอมเมนต์ + ขอบคุณคนกดติดตาม (overlay: /tiktok.html)
+// v1.2.1 = เสียงอ่านเสถียรขึ้น (ลองหลายแบบ + แบ่งข้อความยาว) + ปุ่มตรวจเสียงอ่านในหน้า admin
 // ใช้ Node ล้วน ไม่ต้อง npm install
 
 const http = require('http');
@@ -12,7 +13,7 @@ const crypto = require('crypto');
 const QRCode = require('./vendor/QRCode');                       // ตัวสร้าง QR (MIT)
 const QRErrorCorrectLevel = require('./vendor/QRCode/QRErrorCorrectLevel');
 
-const VERSION = 'v1.2.0';
+const VERSION = 'v1.2.1';
 const PORT = process.env.PORT || 3000;
 const ADMIN_KEY = process.env.ADMIN_KEY || 'changeme';
 // เบอร์โทร (10 หลัก) / เลขบัตรประชาชน (13 หลัก) / e-Wallet ID (15 หลัก) ที่ผูก PromptPay
@@ -209,6 +210,55 @@ async function ttConnect(username) {
   }
 }
 
+// ---------- เสียงอ่านภาษาไทย (Google Translate TTS — ไม่ใช่ API ทางการ) ----------
+const ttsStat = { ok: 0, fail: 0, last: '' };
+
+function splitText(text, max = 180) {          // Google รับได้ครั้งละไม่เกิน ~200 ตัว
+  const out = [];
+  let rest = text.trim();
+  while (rest.length > max) {
+    let cut = rest.lastIndexOf(' ', max);
+    if (cut < max / 2) cut = max;
+    out.push(rest.slice(0, cut).trim());
+    rest = rest.slice(cut).trim();
+  }
+  if (rest) out.push(rest);
+  return out;
+}
+
+async function ttsChunk(text) {
+  let lastErr = '';
+  for (const client of ['tw-ob', 'gtx']) {
+    const url = 'https://translate.google.com/translate_tts?ie=UTF-8&tl=th&total=1&idx=0' +
+      `&textlen=${text.length}&client=${client}&q=` + encodeURIComponent(text);
+    try {
+      const r = await fetch(url, {
+        headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124 Safari/537.36', Referer: 'https://translate.google.com/' },
+        signal: AbortSignal.timeout(8000)
+      });
+      const buf = Buffer.from(await r.arrayBuffer());
+      if (r.ok && buf.length > 500) return buf;
+      lastErr = `${client}: HTTP ${r.status}`;
+    } catch (e) {
+      lastErr = `${client}: ${e.message}`;
+    }
+  }
+  throw new Error(lastErr);
+}
+
+async function ttsAudio(text) {
+  try {
+    const parts = [];
+    for (const chunk of splitText(text)) parts.push(await ttsChunk(chunk));
+    ttsStat.ok++; ttsStat.last = 'ok';
+    return Buffer.concat(parts);              // ต่อไฟล์ mp3 หลายท่อนเป็นอันเดียว
+  } catch (e) {
+    ttsStat.fail++; ttsStat.last = e.message;
+    console.error('[tts] failed:', e.message);
+    return null;
+  }
+}
+
 // ---------- ส่งสัญญาณไป Overlay (SSE) ----------
 const clients = new Set();
 
@@ -342,7 +392,7 @@ const server = http.createServer(async (req, res) => {
     }
 
     // ---- แอดมิน ----
-    if (['/api/test', '/api/skip', '/api/recent', '/api/pending', '/api/approve', '/api/reject'].includes(pathname) || pathname.startsWith('/api/tiktok/')) {
+    if (['/api/test', '/api/skip', '/api/recent', '/api/pending', '/api/approve', '/api/reject', '/api/tts-check'].includes(pathname) || pathname.startsWith('/api/tiktok/')) {
       if (!isAdmin(req)) return json(res, 401, { ok: false, error: 'รหัสแอดมินไม่ถูกต้อง' });
 
       if (m === 'POST' && pathname === '/api/test') {
@@ -358,6 +408,12 @@ const server = http.createServer(async (req, res) => {
       }
       if (m === 'POST' && pathname === '/api/skip') { broadcast('skip', {}); return json(res, 200, { ok: true }); }
       if (m === 'GET' && pathname === '/api/recent') return json(res, 200, { ok: true, items: recent, overlays: clients.size });
+
+      // ตรวจว่าเซิร์ฟเวอร์ดึงเสียงอ่านจาก Google ได้มั้ย
+      if (m === 'GET' && pathname === '/api/tts-check') {
+        const audio = await ttsAudio('ทดสอบเสียงอ่านภาษาไทย');
+        return json(res, 200, { ok: true, works: !!audio, bytes: audio ? audio.length : 0, error: audio ? '' : ttsStat.last, stats: ttsStat });
+      }
 
       // ---- TikTok LIVE ----
       if (m === 'GET' && pathname === '/api/tiktok/status') {
@@ -411,12 +467,10 @@ const server = http.createServer(async (req, res) => {
     if (m === 'GET' && pathname.startsWith('/tts/')) {
       const text = ttsText.get(pathname.slice(5));
       if (!text) { res.writeHead(404); return res.end(); }
-      // Google Translate TTS (ไม่ใช่ API ทางการ — ถ้าใช้ไม่ได้ overlay จะสลับไปใช้เสียงเบราว์เซอร์เอง)
-      const url = 'https://translate.google.com/translate_tts?ie=UTF-8&tl=th&client=tw-ob&q=' + encodeURIComponent(text.slice(0, 200));
-      const r = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0' }, signal: AbortSignal.timeout(8000) }).catch(() => null);
-      if (!r || !r.ok) { res.writeHead(502); return res.end(); }
-      res.writeHead(200, { 'Content-Type': 'audio/mpeg', 'Cache-Control': 'no-store' });
-      return res.end(Buffer.from(await r.arrayBuffer()));
+      const audio = await ttsAudio(text);
+      if (!audio) { res.writeHead(502); return res.end(); }
+      res.writeHead(200, { 'Content-Type': 'audio/mpeg', 'Content-Length': audio.length, 'Cache-Control': 'no-store' });
+      return res.end(audio);
     }
 
     // v2: Opn webhook (ยังไม่เปิดใช้) — โครงไว้ก่อน

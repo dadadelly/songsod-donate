@@ -38,7 +38,7 @@
 <div class="status" id="status"></div>
 
 <script>
-// SONG SOD TikTok Overlay — v1.2.0
+// SONG SOD TikTok Overlay — v1.2.1
 // ?show=chat        อ่านเฉพาะคอมเมนต์
 // ?show=follow      ขอบคุณเฉพาะคนกดติดตาม
 // (ไม่ใส่ = ทั้งสองอย่าง)   ?vol=0.8  ?debug  ?nobox (อ่านอย่างเดียว ไม่โชว์ป้าย)
@@ -75,33 +75,64 @@ function ding(high) {
   });
 }
 
-function playUrl(url) {
-  return new Promise((resolve, reject) => {
-    const a = new Audio(url);
-    a.volume = VOLUME;
-    a.onended = resolve;
-    a.onerror = reject;
-    a.play().catch(reject);
-    setTimeout(resolve, 20000);
+// ---------- เสียงอ่าน (v1.2.1) ----------
+// 1) ถอดเสียงด้วย Web Audio + เพิ่มความดัง (ชัดกว่า ไม่ซ่า)  2) <audio> ธรรมดา
+// 3) เสียงไทยของเครื่อง (ใช้เฉพาะเมื่อมีเสียงภาษาไทยจริง ๆ ไม่งั้นจะเป็นภาษาเอเลี่ยน)
+const BOOST = Math.min(4, Number(params.get('boost') || 1.8));   // ?boost=2.5 ถ้ายังเบา
+let lastVoice = '-';
+
+function playTts(url) {
+  return new Promise(async (resolve, reject) => {
+    try {
+      if (!ctx || ctx.state !== 'running') throw new Error('no-webaudio');
+      const r = await fetch(url, { cache: 'no-store' });
+      if (!r.ok) throw new Error('http ' + r.status);
+      const buf = await ctx.decodeAudioData(await r.arrayBuffer());
+      const src = ctx.createBufferSource();
+      const gain = ctx.createGain();
+      const comp = ctx.createDynamicsCompressor();      // กันเสียงแตกตอนเร่งดัง
+      src.buffer = buf;
+      gain.gain.value = VOLUME * BOOST;
+      src.connect(gain).connect(comp).connect(ctx.destination);
+      src.onended = () => resolve();
+      src.start();
+      lastVoice = 'webaudio';
+      setTimeout(resolve, buf.duration * 1000 + 2000);
+    } catch (e) {
+      if (String(e.message).startsWith('http')) return reject(e);  // เซิร์ฟเวอร์ดึงเสียงไม่ได้
+      // ถอดเสียงไม่ได้ → ลองเล่นแบบธรรมดา
+      const a = new Audio(url);
+      a.volume = VOLUME;
+      a.onended = () => resolve();
+      a.onerror = () => reject(new Error('audio'));
+      a.play().then(() => { lastVoice = 'audio'; }).catch(reject);
+      setTimeout(resolve, 25000);
+    }
   });
 }
+
+function thaiVoice() {
+  return 'speechSynthesis' in window ? speechSynthesis.getVoices().find(v => v.lang && v.lang.toLowerCase().startsWith('th')) : null;
+}
+if ('speechSynthesis' in window) speechSynthesis.getVoices();   // โหลดรายชื่อเสียงไว้ก่อน
 
 function speakBrowser(text) {
   return new Promise(resolve => {
-    if (!('speechSynthesis' in window)) return resolve();
+    const th = thaiVoice();
+    if (!th) { lastVoice = 'ไม่มีเสียงไทยในเครื่อง (ข้าม)'; return resolve(); }
     const u = new SpeechSynthesisUtterance(text);
-    u.lang = 'th-TH'; u.volume = VOLUME;
-    const th = speechSynthesis.getVoices().find(v => v.lang && v.lang.startsWith('th'));
-    if (th) u.voice = th;
-    u.onend = u.onerror = resolve;
+    u.lang = 'th-TH'; u.voice = th; u.volume = VOLUME;
+    u.onend = u.onerror = () => resolve();
     speechSynthesis.speak(u);
+    lastVoice = 'browser: ' + th.name;
     setTimeout(resolve, 20000);
   });
 }
 
-async function speak(item) {
-  try { await playUrl('/tts/' + item.id); }
-  catch { await speakBrowser(item.speech); }
+async function speak(d) {
+  try { await playTts('/tts/' + d.id); }
+  catch { await speakBrowser(d.speech); }
+  if (params.has('debug')) $('status').textContent = '● เสียงอ่าน: ' + lastVoice + ' · boost ' + BOOST;
 }
 
 const wait = ms => new Promise(r => setTimeout(r, ms));

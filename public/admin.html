@@ -52,7 +52,7 @@
 <body>
 <div class="wrap">
   <h1>⚙️ แอดมินโดเนท</h1>
-  <div class="sub">SONG SOD Donate <span id="ver">v1.2.0</span> · Overlay ที่เปิดอยู่: <span id="ov">-</span></div>
+  <div class="sub">SONG SOD Donate <span id="ver">v1.2.1</span> · Overlay ที่เปิดอยู่: <span id="ov">-</span></div>
 
   <div class="card">
     <h2>1. รหัสแอดมิน</h2>
@@ -94,7 +94,9 @@
     <div class="row">
       <button class="ghost" id="ttTestChat">💬 ทดสอบคอมเมนต์</button>
       <button class="ghost" id="ttTestFollow">💖 ทดสอบติดตาม</button>
+      <button class="ghost" id="ttsCheck">🔊 ตรวจเสียงอ่าน</button>
     </div>
+    <div class="note" id="ttsResult"></div>
     <div class="note">กดเชื่อมต่อได้ตั้งแต่ก่อนไลฟ์ ระบบจะลองต่อใหม่เองทุก 1–2 นาทีจนกว่าจะเริ่มไลฟ์ · อ่านแล้ว <span id="ttCount">0</span> คอมเมนต์ / <span id="ttFCount">0</span> ผู้ติดตาม</div>
   </div>
 
@@ -262,6 +264,16 @@ $('ttFollow').onchange = ttSettings;
 
 $('ttTestChat').onclick = async () => { try { await api('/api/tiktok/test', { method: 'POST', body: JSON.stringify({ type: 'chat', name: 'คนดูทดสอบ', text: 'สวัสดีค่ะ ไลฟ์สนุกมาก' }) }); toast('ส่งคอมเมนต์ทดสอบแล้ว'); } catch (e) { toast(e.message); } };
 $('ttTestFollow').onclick = async () => { try { await api('/api/tiktok/test', { method: 'POST', body: JSON.stringify({ type: 'follow', name: 'คนดูทดสอบ' }) }); toast('ส่งติดตามทดสอบแล้ว'); } catch (e) { toast(e.message); } };
+
+$('ttsCheck').onclick = async () => {
+  $('ttsResult').textContent = 'กำลังตรวจ…';
+  try {
+    const j = await api('/api/tts-check');
+    $('ttsResult').innerHTML = j.works
+      ? '✅ เซิร์ฟเวอร์ดึงเสียงอ่านภาษาไทยได้ปกติ'
+      : '❌ เซิร์ฟเวอร์ดึงเสียงอ่านไม่ได้ (' + esc(j.error) + ') — ไลฟ์จะใช้เสียงไทยในเครื่องแทน ถ้าเครื่องไม่มีจะไม่อ่าน';
+  } catch (e) { $('ttsResult').textContent = e.message; }
+};
 
 $('key').addEventListener('change', loadTikTok);
 loadTikTok();
