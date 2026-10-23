@@ -1,17 +1,24 @@
-// SONG SOD Donate — v1.0.0
+// SONG SOD Donate — v1.1.0
 // หน้าโดเนท + Overlay แจ้งเตือนแบบเรียลไทม์ (Server-Sent Events)
-// v1 = โหมดทดสอบ (ยังไม่รับเงินจริง)  |  v2 = ต่อ Opn (PromptPay / TrueMoney)
+// v1.1 = QR PromptPay ของเราเอง + แอดมินกดอนุมัติก่อนเด้ง
+//        (ถ้ายังไม่ตั้ง PROMPTPAY_ID จะเป็นโหมดทดสอบเหมือน v1.0)
 // ใช้ Node ล้วน ไม่ต้อง npm install
 
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const QRCode = require('./vendor/QRCode');                       // ตัวสร้าง QR (MIT)
+const QRErrorCorrectLevel = require('./vendor/QRCode/QRErrorCorrectLevel');
 
-const VERSION = 'v1.0.0';
+const VERSION = 'v1.1.0';
 const PORT = process.env.PORT || 3000;
 const ADMIN_KEY = process.env.ADMIN_KEY || 'changeme';
-const TEST_MODE = process.env.TEST_MODE !== 'false';       // ค่าเริ่มต้น = โหมดทดสอบ
+// เบอร์โทร (10 หลัก) / เลขบัตรประชาชน (13 หลัก) / e-Wallet ID (15 หลัก) ที่ผูก PromptPay
+const PROMPTPAY_ID = String(process.env.PROMPTPAY_ID || '').replace(/\D/g, '');
+const PROMPTPAY_NAME = process.env.PROMPTPAY_NAME || '';   // ชื่อบัญชี ไว้โชว์ให้คนดูมั่นใจ
+const TEST_MODE = !PROMPTPAY_ID;                           // ยังไม่ใส่ PromptPay = โหมดทดสอบ
+const PENDING_TTL = 30 * 60 * 1000;                        // รอโอน/รออนุมัติได้ 30 นาที
 const MIN_AMOUNT = Number(process.env.MIN_AMOUNT || 10);
 const MAX_AMOUNT = Number(process.env.MAX_AMOUNT || 100000);
 const STREAMER_NAME = process.env.STREAMER_NAME || 'SONG SOD';
@@ -46,6 +53,51 @@ function remember(d) {
   ttsText.set(d.id, d.speech);
   if (ttsText.size > 100) ttsText.delete(ttsText.keys().next().value);
 }
+
+// ---------- PromptPay QR (มาตรฐาน EMVCo / Thai QR) ----------
+function tlv(id, value) { return id + String(value.length).padStart(2, '0') + value; }
+
+function crc16(str) {           // CRC-16/CCITT-FALSE
+  let crc = 0xffff;
+  for (const ch of Buffer.from(str, 'ascii')) {
+    crc ^= ch << 8;
+    for (let i = 0; i < 8; i++) crc = crc & 0x8000 ? ((crc << 1) ^ 0x1021) & 0xffff : (crc << 1) & 0xffff;
+  }
+  return crc.toString(16).toUpperCase().padStart(4, '0');
+}
+
+function promptpayPayload(id, amount) {
+  let target;
+  if (id.length >= 15) target = tlv('03', id);                              // e-Wallet
+  else if (id.length >= 13) target = tlv('02', id);                         // เลขบัตรประชาชน / ภาษี
+  else target = tlv('01', ('0000000000000' + id.replace(/^0/, '66')).slice(-13)); // เบอร์โทร
+  let s = tlv('00', '01') +
+    tlv('01', amount ? '12' : '11') +
+    tlv('29', tlv('00', 'A000000677010111') + target) +
+    tlv('58', 'TH') +
+    tlv('53', '764') +
+    (amount ? tlv('54', Number(amount).toFixed(2)) : '') +
+    '6304';
+  return s + crc16(s);
+}
+
+function qrSvg(text) {           // วาด QR เป็นรูป SVG
+  const q = new QRCode(-1, QRErrorCorrectLevel.M);
+  q.addData(text);
+  q.make();
+  const n = q.getModuleCount(), pad = 4, size = n + pad * 2;
+  let d = '';
+  for (let r = 0; r < n; r++) for (let c = 0; c < n; c++) if (q.isDark(r, c)) d += `M${c + pad} ${r + pad}h1v1h-1z`;
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${size} ${size}" shape-rendering="crispEdges">` +
+    `<rect width="${size}" height="${size}" fill="#fff"/><path d="${d}" fill="#000"/></svg>`;
+}
+
+// ---------- รายการรออนุมัติ ----------
+const pending = new Map();       // id -> { d, at, paid }
+setInterval(() => {
+  const t = Date.now();
+  for (const [k, v] of pending) if (t - v.at > PENDING_TTL) pending.delete(k);
+}, 60000);
 
 // ---------- ส่งสัญญาณไป Overlay (SSE) ----------
 const clients = new Set();
@@ -140,7 +192,7 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (m === 'GET' && pathname === '/api/config') {
-      return json(res, 200, { version: VERSION, testMode: TEST_MODE, minAmount: MIN_AMOUNT, maxAmount: MAX_AMOUNT, maxMsg: MAX_MSG, streamer: STREAMER_NAME });
+      return json(res, 200, { version: VERSION, testMode: TEST_MODE, payName: PROMPTPAY_NAME, minAmount: MIN_AMOUNT, maxAmount: MAX_AMOUNT, maxMsg: MAX_MSG, streamer: STREAMER_NAME });
     }
 
     // คนดูกดโดเนท
@@ -155,12 +207,32 @@ const server = http.createServer(async (req, res) => {
         fire(d);
         return json(res, 200, { ok: true, testMode: true, id: d.id });
       }
-      // v2: สร้าง charge กับ Opn แล้วส่ง QR / ลิงก์จ่ายเงินกลับไป
-      return json(res, 503, { ok: false, error: 'ระบบรับเงินจริงยังไม่เปิด (มาใน v2)' });
+      // สร้าง QR PromptPay ตามยอด แล้วเก็บไว้รอแอดมินอนุมัติ
+      if (pending.size >= 200) return json(res, 503, { ok: false, error: 'คิวเต็ม ลองใหม่อีกสักครู่นะ' });
+      const d = makeDonation({ ...b, method: 'promptpay', test: false });
+      pending.set(d.id, { d, at: now, paid: false });
+      return json(res, 200, { ok: true, testMode: false, id: d.id, amount: d.amount, qr: '/qr/' + d.id, payName: PROMPTPAY_NAME });
+    }
+
+    // รูป QR PromptPay ของรายการนั้น ๆ
+    if (m === 'GET' && pathname.startsWith('/qr/')) {
+      const p = pending.get(pathname.slice(4));
+      if (!p) { res.writeHead(404); return res.end(); }
+      res.writeHead(200, { 'Content-Type': 'image/svg+xml', 'Cache-Control': 'no-store' });
+      return res.end(qrSvg(promptpayPayload(PROMPTPAY_ID, p.d.amount)));
+    }
+
+    // คนดูกด "โอนแล้ว"
+    if (m === 'POST' && pathname === '/api/paid') {
+      const b = await readBody(req);
+      const p = pending.get(String(b.id || ''));
+      if (!p) return json(res, 404, { ok: false, error: 'ไม่พบรายการ หรือหมดเวลาแล้ว' });
+      p.paid = true;
+      return json(res, 200, { ok: true });
     }
 
     // ---- แอดมิน ----
-    if (pathname === '/api/test' || pathname === '/api/skip' || pathname === '/api/recent') {
+    if (['/api/test', '/api/skip', '/api/recent', '/api/pending', '/api/approve', '/api/reject'].includes(pathname)) {
       if (!isAdmin(req)) return json(res, 401, { ok: false, error: 'รหัสแอดมินไม่ถูกต้อง' });
 
       if (m === 'POST' && pathname === '/api/test') {
@@ -176,6 +248,23 @@ const server = http.createServer(async (req, res) => {
       }
       if (m === 'POST' && pathname === '/api/skip') { broadcast('skip', {}); return json(res, 200, { ok: true }); }
       if (m === 'GET' && pathname === '/api/recent') return json(res, 200, { ok: true, items: recent, overlays: clients.size });
+
+      // รายการรออนุมัติ (แจ้งโอนแล้วขึ้นก่อน)
+      if (m === 'GET' && pathname === '/api/pending') {
+        const items = [...pending.values()]
+          .sort((a, b) => (b.paid - a.paid) || (b.at - a.at))
+          .map(p => ({ ...p.d, paid: p.paid }));
+        return json(res, 200, { ok: true, items, testMode: TEST_MODE });
+      }
+      // อนุมัติ = เช็กในแอปธนาคารแล้วว่าเงินเข้าจริง → เด้งบนจอ
+      if (m === 'POST' && (pathname === '/api/approve' || pathname === '/api/reject')) {
+        const b = await readBody(req);
+        const p = pending.get(String(b.id || ''));
+        if (!p) return json(res, 404, { ok: false, error: 'ไม่พบรายการ (อาจอนุมัติไปแล้ว)' });
+        pending.delete(p.d.id);
+        if (pathname === '/api/approve') fire({ ...p.d, at: new Date().toISOString() });
+        return json(res, 200, { ok: true });
+      }
     }
 
     // อ่านข้อความเป็นเสียงไทย (ได้เฉพาะข้อความของโดเนทที่เกิดขึ้นจริง)
@@ -211,6 +300,6 @@ const server = http.createServer(async (req, res) => {
 });
 
 server.listen(PORT, () => {
-  console.log(`SONG SOD Donate ${VERSION} running on :${PORT}  (testMode=${TEST_MODE})`);
+  console.log(`SONG SOD Donate ${VERSION} running on :${PORT}  (${TEST_MODE ? 'testMode' : 'PromptPay mode'})`);
   if (ADMIN_KEY === 'changeme') console.log('⚠️  ตั้ง ADMIN_KEY ก่อนขึ้นออนไลน์จริงนะ');
 });

@@ -1,0 +1,6 @@
+QRCode for JavaScript
+Copyright (c) 2009 Kazuhiko Arase — http://www.d-project.com/
+Licensed under the MIT license: http://www.opensource.org/licenses/mit-license.php
+(Node port taken from the qrcode-terminal package by gtanner)
+
+The word "QR Code" is registered trademark of DENSO WAVE INCORPORATED.

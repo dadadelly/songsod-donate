@@ -12,6 +12,7 @@
     --pink:#ff4f9a; --yellow:#ffd23f; --ok:#3ddc97; --err:#ff6b6b;
   }
   *{box-sizing:border-box}
+  [hidden]{display:none!important}
   body{margin:0;min-height:100vh;font-family:'Kanit',sans-serif;color:var(--text);
     background:radial-gradient(circle at 20% 0%,#3a1d5c 0,transparent 50%),radial-gradient(circle at 100% 100%,#5c1d3f 0,transparent 45%),var(--bg);
     display:flex;justify-content:center;padding:24px 16px}
@@ -42,6 +43,16 @@
   .msg{margin-top:14px;padding:12px;border-radius:12px;font-size:14px;display:none}
   .msg.ok{display:block;background:#3ddc9722;color:var(--ok);border:1px solid #3ddc9755}
   .msg.err{display:block;background:#ff6b6b22;color:var(--err);border:1px solid #ff6b6b55}
+  .payinfo{display:flex;align-items:center;gap:10px;padding:12px;border:1px solid var(--line);border-radius:12px;background:#0f0b1a;font-size:14px}
+  .payinfo b{color:var(--yellow)}
+  .qrbox{text-align:center}
+  .qrbox h2{margin:0 0 4px;font-size:20px}
+  .qrbox .amt{font-size:34px;font-weight:800;color:var(--yellow);margin:4px 0}
+  .qrbox img{width:100%;max-width:260px;border-radius:14px;background:#fff;padding:8px;margin:8px auto;display:block}
+  .qrbox .acc{color:var(--muted);font-size:14px}
+  .steps{text-align:left;font-size:14px;color:var(--muted);margin:12px 0 0;padding-left:20px}
+  .steps li{margin:4px 0}
+  button.ghost{margin-top:10px;width:100%;font:inherit;padding:12px;border-radius:14px;cursor:pointer;color:var(--text);background:transparent;border:1px solid var(--line)}
   .foot{text-align:center;color:var(--muted);font-size:12px;margin-top:16px}
 </style>
 </head>
@@ -72,16 +83,28 @@
     <div class="count"><span id="cnt">0</span>/<span id="max">150</span></div>
 
     <label>ช่องทางจ่ายเงิน</label>
-    <div class="pay">
-      <label><input type="radio" name="method" value="promptpay" checked> PromptPay</label>
-      <label><input type="radio" name="method" value="truemoney"> TrueMoney</label>
-    </div>
+    <div class="payinfo">📱 <span><b>PromptPay QR</b> — สแกนจ่ายได้ทุกแอปธนาคาร</span></div>
 
     <button class="go" id="go" type="submit">โดเนทเลย 🎉</button>
     <div class="msg" id="out"></div>
   </form>
 
-  <div class="foot">SONG SOD Donate <span id="ver">v1.0.0</span></div>
+  <div class="card qrbox" id="qrCard" hidden>
+    <h2>สแกนจ่ายผ่าน PromptPay</h2>
+    <div class="amt" id="qrAmt"></div>
+    <img id="qrImg" alt="QR PromptPay">
+    <div class="acc" id="qrAcc"></div>
+    <ol class="steps">
+      <li>เปิดแอปธนาคาร → สแกน QR (หรือแคปหน้าจอแล้วเลือกรูปในแอป)</li>
+      <li>เช็กว่ายอดเงินและชื่อบัญชีถูกต้อง แล้วโอน</li>
+      <li>กลับมากดปุ่ม <b>โอนแล้ว</b> ด้านล่าง</li>
+    </ol>
+    <button class="go" id="paid" type="button">✅ โอนแล้ว</button>
+    <button class="ghost" id="cancel" type="button">ยกเลิก / กลับไปแก้ไข</button>
+    <div class="msg" id="qrOut"></div>
+  </div>
+
+  <div class="foot">SONG SOD Donate <span id="ver">v1.1.0</span></div>
 </div>
 
 <script>
@@ -106,6 +129,30 @@ document.querySelectorAll('.chip').forEach(b => b.onclick = () => {
 $('amount').oninput = () => document.querySelectorAll('.chip').forEach(x => x.classList.toggle('on', x.dataset.v === $('amount').value));
 $('message').oninput = () => $('cnt').textContent = $('message').value.length;
 
+let currentId = null;
+
+$('paid').onclick = async () => {
+  $('paid').disabled = true;
+  try {
+    const r = await fetch('/api/paid', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: currentId }) });
+    const j = await r.json();
+    const o = $('qrOut');
+    if (!j.ok) { o.className = 'msg err'; o.textContent = j.error; $('paid').disabled = false; return; }
+    o.className = 'msg ok';
+    o.textContent = 'ขอบคุณมากนะ 💖 รอสตรีมเมอร์ตรวจยอดสักครู่ แล้วข้อความจะขึ้นจอไลฟ์';
+    $('cancel').textContent = 'โดเนทอีกครั้ง';
+  } catch {
+    $('paid').disabled = false;
+  }
+};
+
+$('cancel').onclick = () => {
+  $('qrCard').hidden = true;
+  $('f').hidden = false;
+  $('cancel').textContent = 'ยกเลิก / กลับไปแก้ไข';
+  if ($('qrOut').className.includes('ok')) { $('message').value = ''; $('cnt').textContent = '0'; }
+};
+
 function show(type, text) { const o = $('out'); o.className = 'msg ' + type; o.textContent = text; }
 
 $('f').onsubmit = async e => {
@@ -120,14 +167,27 @@ $('f').onsubmit = async e => {
       body: JSON.stringify({
         name: $('name').value,
         amount,
-        message: $('message').value,
-        method: document.querySelector('input[name=method]:checked').value
+        message: $('message').value
       })
     });
     const j = await r.json();
     if (!j.ok) return show('err', j.error || 'เกิดข้อผิดพลาด');
-    show('ok', j.testMode ? 'ส่งแล้ว! (โหมดทดสอบ) ดูบนจอไลฟ์ได้เลย 🎉' : 'ขอบคุณที่โดเนทนะ 💖');
-    $('message').value = ''; $('cnt').textContent = '0';
+    if (j.testMode) {
+      show('ok', 'ส่งแล้ว! (โหมดทดสอบ) ดูบนจอไลฟ์ได้เลย 🎉');
+      $('message').value = ''; $('cnt').textContent = '0';
+      return;
+    }
+    // โหมด PromptPay → โชว์ QR
+    currentId = j.id;
+    $('qrAmt').textContent = j.amount.toLocaleString('th-TH', { minimumFractionDigits: 2 }) + ' บาท';
+    $('qrImg').src = j.qr;
+    $('qrAcc').textContent = j.payName ? 'ชื่อบัญชี: ' + j.payName : '';
+    $('qrOut').className = 'msg';
+    $('paid').disabled = false;
+    $('out').className = 'msg';
+    $('f').hidden = true;
+    $('qrCard').hidden = false;
+    window.scrollTo(0, 0);
   } catch {
     show('err', 'เชื่อมต่อเซิร์ฟเวอร์ไม่ได้');
   } finally {

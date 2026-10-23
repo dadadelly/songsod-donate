@@ -8,6 +8,7 @@
 <style>
   :root{--bg:#0f0b1a;--card:#1a1430;--line:#2e2650;--text:#f4f0ff;--muted:#a59cc7;--pink:#ff4f9a;--yellow:#ffd23f;--ok:#3ddc97;--err:#ff6b6b}
   *{box-sizing:border-box}
+  [hidden]{display:none!important}
   body{margin:0;font-family:'Kanit',sans-serif;background:var(--bg);color:var(--text);padding:20px 16px}
   .wrap{max-width:560px;margin:0 auto}
   h1{font-size:24px;margin:0 0 4px}
@@ -30,13 +31,21 @@
   li:first-child{border-top:0}
   li b{color:var(--yellow)}
   li .t{color:var(--muted);font-size:12px}
+  .pend li{display:flex;gap:10px;align-items:flex-start}
+  .pend .info{flex:1;min-width:0;word-break:break-word}
+  .pend .btns{display:flex;flex-direction:column;gap:6px}
+  .pend button{padding:8px 12px}
+  button.ok{background:var(--ok);color:#0f0b1a}
+  .paid{color:var(--ok);font-size:12px;font-weight:600}
+  .wait{color:var(--muted);font-size:12px}
+  .count{display:inline-block;min-width:22px;text-align:center;background:var(--pink);color:#fff;border-radius:99px;font-size:12px;padding:1px 6px;margin-left:6px}
   .tag{font-size:11px;padding:1px 6px;border-radius:6px;background:#ffffff14;color:var(--muted);margin-left:4px}
 </style>
 </head>
 <body>
 <div class="wrap">
   <h1>⚙️ แอดมินโดเนท</h1>
-  <div class="sub">SONG SOD Donate <span id="ver">v1.0.0</span> · Overlay ที่เปิดอยู่: <span id="ov">-</span></div>
+  <div class="sub">SONG SOD Donate <span id="ver">v1.1.0</span> · Overlay ที่เปิดอยู่: <span id="ov">-</span></div>
 
   <div class="card">
     <h2>1. รหัสแอดมิน</h2>
@@ -45,10 +54,16 @@
   </div>
 
   <div class="card">
+    <h2>⏳ รออนุมัติ <span class="count" id="pCount">0</span></h2>
+    <div class="note" id="pNote" style="margin:0 0 8px">เปิดแอปธนาคารเช็กว่าเงินเข้าจริง แล้วกด <b>อนุมัติ</b> → จะเด้งบนจอทันที (อัปเดตเองทุก 5 วิ)</div>
+    <ul class="pend" id="pList"><li class="t">ใส่รหัสแอดมินก่อน</li></ul>
+  </div>
+
+  <div class="card">
     <h2>2. ลิงก์สำหรับใช้งาน</h2>
     <label>ลิงก์โดเนท (แจกคนดู)</label>
     <div class="url"><input id="uDonate" readonly><button class="ghost" data-copy="uDonate">คัดลอก</button></div>
-    <label>ลิงก์ Overlay (ใส่ใน OBS → Browser Source, 800×600)</label>
+    <label>ลิงก์ Overlay (ใส่ใน TikTok LIVE Studio → Link Source หรือ OBS)</label>
     <div class="url"><input id="uOverlay" readonly><button class="ghost" data-copy="uOverlay">คัดลอก</button></div>
   </div>
 
@@ -83,7 +98,10 @@ $('key').onchange = () => store.set('ssd_admin_key', $('key').value);
 $('uDonate').value = location.origin + '/donate.html';
 $('uOverlay').value = location.origin + '/overlay.html';
 
-fetch('/api/config').then(r => r.json()).then(c => $('ver').textContent = c.version + (c.testMode ? ' (โหมดทดสอบ)' : '')).catch(()=>{});
+fetch('/api/config').then(r => r.json()).then(c => {
+  $('ver').textContent = c.version + (c.testMode ? ' (โหมดทดสอบ)' : ' (PromptPay)');
+  if (c.testMode) $('pNote').textContent = 'ตอนนี้เป็นโหมดทดสอบ (ยังไม่ได้ตั้ง PROMPTPAY_ID ใน Render) — โดเนทจะเด้งทันทีโดยไม่ต้องอนุมัติ';
+}).catch(()=>{});
 
 function toast(t){ const el=$('toast'); el.textContent=t; el.style.display='block'; clearTimeout(el._t); el._t=setTimeout(()=>el.style.display='none',2200); }
 
@@ -121,6 +139,58 @@ async function load() {
 }
 $('btnLoad').onclick = load;
 if ($('key').value) load();
+
+// ---------- รออนุมัติ ----------
+let seenPaid = new Set();
+function beep() {
+  try {
+    const ac = new (window.AudioContext || window.webkitAudioContext)();
+    const o = ac.createOscillator(), g = ac.createGain();
+    o.frequency.value = 880; g.gain.value = 0.15;
+    o.connect(g).connect(ac.destination); o.start(); o.stop(ac.currentTime + 0.25);
+  } catch {}
+}
+
+async function loadPending() {
+  if (!$('key').value) return;
+  try {
+    const j = await api('/api/pending');
+    $('pCount').textContent = j.items.length;
+    let newPaid = false;
+    for (const d of j.items) if (d.paid && !seenPaid.has(d.id)) { seenPaid.add(d.id); newPaid = true; }
+    if (newPaid) { beep(); toast('มีคนแจ้งโอนแล้ว 💰'); }
+    $('pList').innerHTML = j.items.length ? j.items.map(d => `
+      <li>
+        <div class="info">
+          <b>${esc(d.name)}</b> ${d.amount.toLocaleString('th-TH', { minimumFractionDigits: 2 })} บาท<br>
+          ${esc(d.message)}
+          <div class="${d.paid ? 'paid' : 'wait'}">${d.paid ? '✅ แจ้งโอนแล้ว' : '⌛ ยังไม่กดแจ้งโอน'} · ${new Date(d.at).toLocaleTimeString('th-TH')}</div>
+        </div>
+        <div class="btns">
+          <button class="ok" data-act="approve" data-id="${d.id}">อนุมัติ</button>
+          <button class="ghost" data-act="reject" data-id="${d.id}">ไม่พบเงิน</button>
+        </div>
+      </li>`).join('') : '<li class="t">ยังไม่มีรายการ</li>';
+  } catch (e) {
+    $('pList').innerHTML = `<li class="t">${esc(e.message)}</li>`;
+  }
+}
+
+$('pList').onclick = async e => {
+  const b = e.target.closest('button[data-act]');
+  if (!b) return;
+  if (b.dataset.act === 'reject' && !confirm('ลบรายการนี้? (จะไม่เด้งบนจอ)')) return;
+  b.disabled = true;
+  try {
+    await api('/api/' + b.dataset.act, { method: 'POST', body: JSON.stringify({ id: b.dataset.id }) });
+    toast(b.dataset.act === 'approve' ? 'อนุมัติแล้ว เด้งบนจอเลย 🎉' : 'ลบรายการแล้ว');
+    loadPending(); load();
+  } catch (err) { toast(err.message); b.disabled = false; }
+};
+
+$('key').addEventListener('change', () => { loadPending(); load(); });
+loadPending();
+setInterval(loadPending, 5000);
 </script>
 </body>
 </html>
