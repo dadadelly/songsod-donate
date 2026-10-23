@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>แอดมิน | SONG SOD Donate</title>
+<link href="https://fonts.googleapis.com/css2?family=Kanit:wght@400;600;800&display=swap" rel="stylesheet">
+<style>
+  :root{--bg:#0f0b1a;--card:#1a1430;--line:#2e2650;--text:#f4f0ff;--muted:#a59cc7;--pink:#ff4f9a;--yellow:#ffd23f;--ok:#3ddc97;--err:#ff6b6b}
+  *{box-sizing:border-box}
+  body{margin:0;font-family:'Kanit',sans-serif;background:var(--bg);color:var(--text);padding:20px 16px}
+  .wrap{max-width:560px;margin:0 auto}
+  h1{font-size:24px;margin:0 0 4px}
+  .sub{color:var(--muted);font-size:13px;margin-bottom:16px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:16px;margin-bottom:14px}
+  h2{font-size:16px;margin:0 0 10px;color:var(--yellow)}
+  label{display:block;font-size:13px;color:var(--muted);margin:10px 0 4px}
+  input{width:100%;font:inherit;color:var(--text);background:#0f0b1a;border:1px solid var(--line);border-radius:10px;padding:10px 12px;outline:none}
+  input:focus{border-color:var(--pink)}
+  .row{display:flex;gap:8px;margin-top:12px;flex-wrap:wrap}
+  button{font:inherit;font-weight:600;border:0;border-radius:10px;padding:10px 14px;cursor:pointer;color:#1a1430;background:var(--yellow)}
+  button.pink{background:var(--pink);color:#fff}
+  button.ghost{background:transparent;color:var(--text);border:1px solid var(--line)}
+  .url{display:flex;gap:8px}
+  .url input{font-size:13px}
+  .note{font-size:13px;margin-top:8px;color:var(--muted)}
+  .toast{position:fixed;bottom:16px;left:50%;transform:translateX(-50%);background:#000d;padding:10px 16px;border-radius:10px;font-size:14px;display:none}
+  ul{list-style:none;padding:0;margin:0}
+  li{padding:10px 0;border-top:1px solid var(--line);font-size:14px}
+  li:first-child{border-top:0}
+  li b{color:var(--yellow)}
+  li .t{color:var(--muted);font-size:12px}
+  .tag{font-size:11px;padding:1px 6px;border-radius:6px;background:#ffffff14;color:var(--muted);margin-left:4px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>⚙️ แอดมินโดเนท</h1>
+  <div class="sub">SONG SOD Donate <span id="ver">v1.0.0</span> · Overlay ที่เปิดอยู่: <span id="ov">-</span></div>
+
+  <div class="card">
+    <h2>1. รหัสแอดมิน</h2>
+    <input id="key" type="password" placeholder="ADMIN_KEY">
+    <div class="note">จำไว้ในเบราว์เซอร์นี้เท่านั้น</div>
+  </div>
+
+  <div class="card">
+    <h2>2. ลิงก์สำหรับใช้งาน</h2>
+    <label>ลิงก์โดเนท (แจกคนดู)</label>
+    <div class="url"><input id="uDonate" readonly><button class="ghost" data-copy="uDonate">คัดลอก</button></div>
+    <label>ลิงก์ Overlay (ใส่ใน OBS → Browser Source, 800×600)</label>
+    <div class="url"><input id="uOverlay" readonly><button class="ghost" data-copy="uOverlay">คัดลอก</button></div>
+  </div>
+
+  <div class="card">
+    <h2>3. ทดสอบแจ้งเตือน</h2>
+    <label>ชื่อ</label><input id="tName" value="คนดูทดสอบ">
+    <label>จำนวนเงิน</label><input id="tAmount" type="number" value="100">
+    <label>ข้อความ</label><input id="tMsg" value="สวัสดีค่ะ ไลฟ์สนุกมากเลย">
+    <div class="row">
+      <button class="pink" id="btnTest">🎉 ยิงทดสอบ</button>
+      <button class="ghost" id="btnSkip">⏭ ข้ามที่กำลังแสดง</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>4. โดเนทล่าสุด</h2>
+    <div class="row" style="margin-top:0;margin-bottom:8px"><button class="ghost" id="btnLoad">รีเฟรช</button></div>
+    <ul id="list"><li class="t">ใส่รหัสแอดมินแล้วกดรีเฟรช</li></ul>
+  </div>
+</div>
+<div class="toast" id="toast"></div>
+
+<script>
+const $ = id => document.getElementById(id);
+const store = {
+  get(k){ try { return localStorage.getItem(k) || ''; } catch { return ''; } },
+  set(k,v){ try { localStorage.setItem(k, v); } catch {} }
+};
+$('key').value = store.get('ssd_admin_key');
+$('key').onchange = () => store.set('ssd_admin_key', $('key').value);
+
+$('uDonate').value = location.origin + '/donate.html';
+$('uOverlay').value = location.origin + '/overlay.html';
+
+fetch('/api/config').then(r => r.json()).then(c => $('ver').textContent = c.version + (c.testMode ? ' (โหมดทดสอบ)' : '')).catch(()=>{});
+
+function toast(t){ const el=$('toast'); el.textContent=t; el.style.display='block'; clearTimeout(el._t); el._t=setTimeout(()=>el.style.display='none',2200); }
+
+document.querySelectorAll('[data-copy]').forEach(b => b.onclick = async () => {
+  const v = $(b.dataset.copy).value;
+  try { await navigator.clipboard.writeText(v); toast('คัดลอกแล้ว'); }
+  catch { $(b.dataset.copy).select(); toast('กดค้างเพื่อคัดลอก'); }
+});
+
+async function api(path, opt = {}) {
+  const r = await fetch(path, { ...opt, headers: { 'Content-Type': 'application/json', 'x-admin-key': $('key').value } });
+  const j = await r.json().catch(() => ({ ok: false }));
+  if (!j.ok) throw new Error(j.error || 'ผิดพลาด');
+  return j;
+}
+
+$('btnTest').onclick = async () => {
+  try {
+    await api('/api/test', { method: 'POST', body: JSON.stringify({ name: $('tName').value, amount: Number($('tAmount').value), message: $('tMsg').value }) });
+    toast('ส่งแจ้งเตือนแล้ว 🎉'); load();
+  } catch (e) { toast(e.message); }
+};
+$('btnSkip').onclick = async () => { try { await api('/api/skip', { method: 'POST' }); toast('ข้ามแล้ว'); } catch (e) { toast(e.message); } };
+
+function esc(s){ return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+async function load() {
+  try {
+    const j = await api('/api/recent');
+    $('ov').textContent = j.overlays;
+    $('list').innerHTML = j.items.length ? j.items.map(d =>
+      `<li><b>${esc(d.name)}</b> ${d.amount} บาท<span class="tag">${esc(d.method)}${d.test ? ' · test' : ''}</span><br>${esc(d.message)}<div class="t">${new Date(d.at).toLocaleString('th-TH')}</div></li>`
+    ).join('') : '<li class="t">ยังไม่มีโดเนท</li>';
+  } catch (e) { toast(e.message); }
+}
+$('btnLoad').onclick = load;
+if ($('key').value) load();
+</script>
+</body>
+</html>

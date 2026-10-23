@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>โดเนท | SONG SOD</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Kanit:wght@400;600;800&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#0f0b1a; --card:#1a1430; --line:#2e2650; --text:#f4f0ff; --muted:#a59cc7;
+    --pink:#ff4f9a; --yellow:#ffd23f; --ok:#3ddc97; --err:#ff6b6b;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;min-height:100vh;font-family:'Kanit',sans-serif;color:var(--text);
+    background:radial-gradient(circle at 20% 0%,#3a1d5c 0,transparent 50%),radial-gradient(circle at 100% 100%,#5c1d3f 0,transparent 45%),var(--bg);
+    display:flex;justify-content:center;padding:24px 16px}
+  .wrap{width:100%;max-width:440px}
+  .head{text-align:center;margin-bottom:18px}
+  .logo{font-size:44px;line-height:1}
+  h1{margin:6px 0 2px;font-size:28px;font-weight:800;letter-spacing:.5px}
+  h1 span{color:var(--pink)}
+  .sub{color:var(--muted);font-size:14px}
+  .badge{display:inline-block;margin-top:8px;padding:3px 10px;border-radius:99px;background:#ffd23f22;color:var(--yellow);font-size:12px;border:1px solid #ffd23f55}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:20px;padding:20px}
+  label{display:block;font-size:14px;color:var(--muted);margin:14px 0 6px}
+  label:first-child{margin-top:0}
+  input,textarea{width:100%;font:inherit;color:var(--text);background:#0f0b1a;border:1px solid var(--line);border-radius:12px;padding:12px 14px;outline:none}
+  input:focus,textarea:focus{border-color:var(--pink)}
+  textarea{resize:none;height:90px}
+  .count{text-align:right;font-size:12px;color:var(--muted);margin-top:4px}
+  .chips{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:8px}
+  .chip{font:inherit;font-weight:600;padding:10px 0;border-radius:12px;border:1px solid var(--line);background:#0f0b1a;color:var(--text);cursor:pointer}
+  .chip.on{background:var(--pink);border-color:var(--pink)}
+  .pay{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+  .pay label{margin:0;display:flex;align-items:center;gap:8px;padding:12px;border:1px solid var(--line);border-radius:12px;background:#0f0b1a;color:var(--text);cursor:pointer}
+  .pay input{width:auto;accent-color:var(--pink)}
+  .pay label:has(input:checked){border-color:var(--pink)}
+  button.go{margin-top:20px;width:100%;font:inherit;font-size:18px;font-weight:800;padding:14px;border:0;border-radius:14px;cursor:pointer;color:#1a1430;
+    background:linear-gradient(90deg,var(--yellow),var(--pink))}
+  button.go:disabled{opacity:.6;cursor:wait}
+  .msg{margin-top:14px;padding:12px;border-radius:12px;font-size:14px;display:none}
+  .msg.ok{display:block;background:#3ddc9722;color:var(--ok);border:1px solid #3ddc9755}
+  .msg.err{display:block;background:#ff6b6b22;color:var(--err);border:1px solid #ff6b6b55}
+  .foot{text-align:center;color:var(--muted);font-size:12px;margin-top:16px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="head">
+    <div class="logo">💖</div>
+    <h1>โดเนทให้ <span id="streamer">SONG SOD</span></h1>
+    <div class="sub">ส่งกำลังใจ + ข้อความขึ้นจอไลฟ์</div>
+    <div class="badge" id="testBadge" hidden>โหมดทดสอบ — ยังไม่ตัดเงินจริง</div>
+  </div>
+
+  <form class="card" id="f" autocomplete="off">
+    <label for="name">ชื่อที่จะขึ้นจอ</label>
+    <input id="name" maxlength="30" placeholder="เช่น น้องเหมียว">
+
+    <label>จำนวนเงิน (บาท)</label>
+    <div class="chips">
+      <button type="button" class="chip" data-v="20">20</button>
+      <button type="button" class="chip on" data-v="50">50</button>
+      <button type="button" class="chip" data-v="100">100</button>
+      <button type="button" class="chip" data-v="300">300</button>
+    </div>
+    <input id="amount" type="number" inputmode="decimal" value="50" min="1" step="1">
+
+    <label for="message">ข้อความ (บอทจะอ่านออกเสียง)</label>
+    <textarea id="message" maxlength="150" placeholder="พิมพ์ข้อความถึงสตรีมเมอร์..."></textarea>
+    <div class="count"><span id="cnt">0</span>/<span id="max">150</span></div>
+
+    <label>ช่องทางจ่ายเงิน</label>
+    <div class="pay">
+      <label><input type="radio" name="method" value="promptpay" checked> PromptPay</label>
+      <label><input type="radio" name="method" value="truemoney"> TrueMoney</label>
+    </div>
+
+    <button class="go" id="go" type="submit">โดเนทเลย 🎉</button>
+    <div class="msg" id="out"></div>
+  </form>
+
+  <div class="foot">SONG SOD Donate <span id="ver">v1.0.0</span></div>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+let cfg = { minAmount: 10, maxMsg: 150, testMode: true };
+
+fetch('/api/config').then(r => r.json()).then(c => {
+  cfg = c;
+  $('streamer').textContent = c.streamer;
+  $('ver').textContent = c.version;
+  $('max').textContent = c.maxMsg;
+  $('message').maxLength = c.maxMsg;
+  $('amount').min = c.minAmount;
+  $('testBadge').hidden = !c.testMode;
+}).catch(() => {});
+
+document.querySelectorAll('.chip').forEach(b => b.onclick = () => {
+  document.querySelectorAll('.chip').forEach(x => x.classList.remove('on'));
+  b.classList.add('on');
+  $('amount').value = b.dataset.v;
+});
+$('amount').oninput = () => document.querySelectorAll('.chip').forEach(x => x.classList.toggle('on', x.dataset.v === $('amount').value));
+$('message').oninput = () => $('cnt').textContent = $('message').value.length;
+
+function show(type, text) { const o = $('out'); o.className = 'msg ' + type; o.textContent = text; }
+
+$('f').onsubmit = async e => {
+  e.preventDefault();
+  const amount = Number($('amount').value);
+  if (!(amount >= cfg.minAmount)) return show('err', `ขั้นต่ำ ${cfg.minAmount} บาทนะ`);
+  $('go').disabled = true;
+  try {
+    const r = await fetch('/api/donate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: $('name').value,
+        amount,
+        message: $('message').value,
+        method: document.querySelector('input[name=method]:checked').value
+      })
+    });
+    const j = await r.json();
+    if (!j.ok) return show('err', j.error || 'เกิดข้อผิดพลาด');
+    show('ok', j.testMode ? 'ส่งแล้ว! (โหมดทดสอบ) ดูบนจอไลฟ์ได้เลย 🎉' : 'ขอบคุณที่โดเนทนะ 💖');
+    $('message').value = ''; $('cnt').textContent = '0';
+  } catch {
+    show('err', 'เชื่อมต่อเซิร์ฟเวอร์ไม่ได้');
+  } finally {
+    $('go').disabled = false;
+  }
+};
+</script>
+</body>
+</html>

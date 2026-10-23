@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Overlay | SONG SOD Donate</title>
+<link href="https://fonts.googleapis.com/css2?family=Kanit:wght@600;800&display=swap" rel="stylesheet">
+<style>
+  /* พื้นหลังโปร่งใส สำหรับ OBS Browser Source (แนะนำขนาด 800x600) */
+  html,body{margin:0;height:100%;background:transparent;overflow:hidden;font-family:'Kanit',sans-serif}
+  .stage{position:absolute;inset:0;display:flex;align-items:center;justify-content:center}
+  .alert{text-align:center;opacity:0;transform:scale(.6);transition:opacity .4s,transform .4s cubic-bezier(.2,1.6,.4,1);max-width:90vw}
+  .alert.show{opacity:1;transform:scale(1)}
+  .gif{height:220px;max-width:80vw;object-fit:contain;display:block;margin:0 auto}
+  .emoji{font-size:150px;line-height:1;display:inline-block;animation:bounce 1s infinite}
+  @keyframes bounce{0%,100%{transform:translateY(0) rotate(-6deg)}50%{transform:translateY(-24px) rotate(6deg)}}
+  .title{margin-top:8px;font-size:44px;font-weight:800;color:#fff;
+    text-shadow:0 0 6px #000,0 3px 0 #000,0 0 18px #ff4f9a}
+  .title .n{color:#ffd23f}
+  .title .a{color:#ff4f9a}
+  .text{margin:10px auto 0;font-size:30px;font-weight:600;color:#fff;max-width:760px;word-break:break-word;
+    text-shadow:0 0 6px #000,0 2px 0 #000}
+  .confetti{position:absolute;top:-20px;width:12px;height:18px;border-radius:3px;animation:fall linear forwards}
+  @keyframes fall{to{transform:translateY(110vh) rotate(720deg)}}
+  .unlock{position:fixed;bottom:12px;left:50%;transform:translateX(-50%);background:#000c;color:#fff;
+    padding:10px 16px;border-radius:12px;font-size:16px;cursor:pointer;display:none}
+  .status{position:fixed;top:6px;left:8px;font:12px sans-serif;color:#fff8;text-shadow:0 0 3px #000}
+</style>
+</head>
+<body>
+<div class="stage">
+  <div class="alert" id="alert">
+    <div id="visual"></div>
+    <div class="title"><span class="n" id="aName"></span> โดเนท <span class="a" id="aAmount"></span></div>
+    <div class="text" id="aText"></div>
+  </div>
+</div>
+<div class="unlock" id="unlock">🔊 คลิกเพื่อเปิดเสียง (ไม่ต้องทำใน OBS)</div>
+<div class="status" id="status"></div>
+
+<script>
+// SONG SOD Donate Overlay — v1.0.0
+const params = new URLSearchParams(location.search);
+const SHOW_STATUS = params.has('debug');
+const MIN_SHOW_MS = 6000;        // แสดงอย่างน้อย 6 วิ
+const GAP_MS = 800;              // เว้นระหว่างแต่ละโดเนท
+const GIF_URL = params.get('gif') || '/assets/alert.gif';
+const SOUND_URL = params.get('sound') || '/assets/alert.mp3';
+const VOLUME = Math.min(1, Number(params.get('vol') || 0.8));
+
+const $ = id => document.getElementById(id);
+const queue = [];
+let busy = false;
+let skipCurrent = null;
+let skipped = false;
+
+// ---------- เสียง ----------
+const AC = window.AudioContext || window.webkitAudioContext;
+const ctx = AC ? new AC() : null;
+if (ctx && ctx.state === 'suspended') $('unlock').style.display = 'block';
+$('unlock').onclick = () => { ctx && ctx.resume(); $('unlock').style.display = 'none'; };
+
+function chime() {               // เสียงติ๊ง ๆ สำรอง ถ้าไม่มีไฟล์ alert.mp3
+  if (!ctx) return Promise.resolve();
+  const notes = [784, 988, 1175, 1568];
+  notes.forEach((f, i) => {
+    const o = ctx.createOscillator(), g = ctx.createGain();
+    o.type = 'triangle'; o.frequency.value = f;
+    const t = ctx.currentTime + i * 0.12;
+    g.gain.setValueAtTime(0, t);
+    g.gain.linearRampToValueAtTime(0.25 * VOLUME, t + 0.02);
+    g.gain.exponentialRampToValueAtTime(0.001, t + 0.5);
+    o.connect(g).connect(ctx.destination);
+    o.start(t); o.stop(t + 0.55);
+  });
+  return new Promise(r => setTimeout(r, 900));
+}
+
+function playUrl(url) {          // เล่นไฟล์เสียงจนจบ
+  return new Promise((resolve, reject) => {
+    const a = new Audio(url);
+    a.volume = VOLUME;
+    a.onended = () => resolve();
+    a.onerror = () => reject();
+    a.play().catch(reject);
+    skipCurrent = () => { a.pause(); resolve(); };
+  });
+}
+
+function speakBrowser(text) {    // สำรอง: เสียงอ่านของเบราว์เซอร์
+  return new Promise(resolve => {
+    if (!('speechSynthesis' in window)) return resolve();
+    const u = new SpeechSynthesisUtterance(text);
+    u.lang = 'th-TH'; u.volume = VOLUME;
+    const th = speechSynthesis.getVoices().find(v => v.lang && v.lang.startsWith('th'));
+    if (th) u.voice = th;
+    u.onend = u.onerror = () => resolve();
+    speechSynthesis.speak(u);
+    setTimeout(resolve, 20000);
+    skipCurrent = () => { speechSynthesis.cancel(); resolve(); };
+  });
+}
+
+async function speak(d) {
+  try { await playUrl('/tts/' + d.id); }
+  catch { await speakBrowser(d.speech); }
+}
+
+// ---------- ภาพ ----------
+function setVisual() {
+  const box = $('visual');
+  box.innerHTML = '';
+  const img = new Image();
+  img.className = 'gif';
+  img.src = GIF_URL + (GIF_URL.includes('?') ? '&' : '?') + 't=' + Date.now(); // ให้ GIF เล่นใหม่ทุกครั้ง
+  img.onerror = () => { box.innerHTML = '<span class="emoji">🎉</span>'; };
+  box.appendChild(img);
+}
+
+function confetti() {
+  const colors = ['#ff4f9a', '#ffd23f', '#3ddc97', '#5ab0ff', '#fff'];
+  for (let i = 0; i < 60; i++) {
+    const c = document.createElement('div');
+    c.className = 'confetti';
+    c.style.left = Math.random() * 100 + 'vw';
+    c.style.background = colors[i % colors.length];
+    c.style.animationDuration = 2 + Math.random() * 2.5 + 's';
+    c.style.animationDelay = Math.random() * 0.6 + 's';
+    document.body.appendChild(c);
+    setTimeout(() => c.remove(), 5500);
+  }
+}
+
+// ---------- คิวแจ้งเตือน ----------
+const wait = ms => new Promise(r => setTimeout(r, ms));
+
+async function showDonation(d) {
+  $('aName').textContent = d.name;
+  $('aAmount').textContent = d.amount.toLocaleString('th-TH') + ' บาท';
+  $('aText').textContent = d.message;
+  setVisual();
+  $('alert').classList.add('show');
+  confetti();
+
+  skipped = false;
+  const started = Date.now();
+  try { await playUrl(SOUND_URL); } catch { if (!skipped) await chime(); }  // เพลง/เสียงแจ้งเตือน
+  if (!skipped) await speak(d);                                            // อ่านข้อความ
+  const left = MIN_SHOW_MS - (Date.now() - started);
+  if (!skipped && left > 0) await Promise.race([wait(left), new Promise(r => skipCurrent = r)]);
+
+  $('alert').classList.remove('show');
+  skipCurrent = null;
+  await wait(GAP_MS);
+}
+
+async function run() {
+  if (busy) return;
+  busy = true;
+  while (queue.length) await showDonation(queue.shift());
+  busy = false;
+}
+
+// ---------- เชื่อมเซิร์ฟเวอร์ ----------
+function status(t) { if (SHOW_STATUS) $('status').textContent = t; }
+const es = new EventSource('/events');
+es.onopen = () => status('● connected');
+es.onerror = () => status('○ reconnecting…');
+es.addEventListener('donate', e => { queue.push(JSON.parse(e.data)); run(); });
+es.addEventListener('skip', () => { if (!busy) return; skipped = true; if (skipCurrent) skipCurrent(); });
+</script>
+</body>
+</html>
