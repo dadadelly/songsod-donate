@@ -1,0 +1,285 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>แอดมิน | SONG SOD Donate</title>
+<link href="https://fonts.googleapis.com/css2?family=Kanit:wght@400;600;800&display=swap" rel="stylesheet">
+<style>
+  :root{--bg:#0f0b1a;--card:#1a1430;--line:#2e2650;--text:#f4f0ff;--muted:#a59cc7;--pink:#ff4f9a;--yellow:#ffd23f;--ok:#3ddc97;--err:#ff6b6b}
+  *{box-sizing:border-box}
+  [hidden]{display:none!important}
+  body{margin:0;font-family:'Kanit',sans-serif;background:var(--bg);color:var(--text);padding:20px 16px}
+  .wrap{max-width:560px;margin:0 auto}
+  h1{font-size:24px;margin:0 0 4px}
+  .sub{color:var(--muted);font-size:13px;margin-bottom:16px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:16px;margin-bottom:14px}
+  h2{font-size:16px;margin:0 0 10px;color:var(--yellow)}
+  label{display:block;font-size:13px;color:var(--muted);margin:10px 0 4px}
+  input{width:100%;font:inherit;color:var(--text);background:#0f0b1a;border:1px solid var(--line);border-radius:10px;padding:10px 12px;outline:none}
+  input:focus{border-color:var(--pink)}
+  .row{display:flex;gap:8px;margin-top:12px;flex-wrap:wrap}
+  button{font:inherit;font-weight:600;border:0;border-radius:10px;padding:10px 14px;cursor:pointer;color:#1a1430;background:var(--yellow)}
+  button.pink{background:var(--pink);color:#fff}
+  button.ghost{background:transparent;color:var(--text);border:1px solid var(--line)}
+  .url{display:flex;gap:8px}
+  .url input{font-size:13px}
+  .note{font-size:13px;margin-top:8px;color:var(--muted)}
+  .toast{position:fixed;bottom:16px;left:50%;transform:translateX(-50%);background:#000d;padding:10px 16px;border-radius:10px;font-size:14px;display:none}
+  ul{list-style:none;padding:0;margin:0}
+  li{padding:10px 0;border-top:1px solid var(--line);font-size:14px}
+  li:first-child{border-top:0}
+  li b{color:var(--yellow)}
+  li .t{color:var(--muted);font-size:12px}
+  .pend li{display:flex;gap:10px;align-items:flex-start}
+  .pend .info{flex:1;min-width:0;word-break:break-word}
+  .pend .btns{display:flex;flex-direction:column;gap:6px}
+  .pend button{padding:8px 12px}
+  button.ok{background:var(--ok);color:#0f0b1a}
+  .paid{color:var(--ok);font-size:12px;font-weight:600}
+  .wait{color:var(--muted);font-size:12px}
+  .count{display:inline-block;min-width:22px;text-align:center;background:var(--pink);color:#fff;border-radius:99px;font-size:12px;padding:1px 6px;margin-left:6px}
+  .ttstat{display:flex;align-items:center;gap:8px;font-size:14px;margin-bottom:6px}
+  .dot{width:10px;height:10px;border-radius:50%;background:var(--muted);flex:none}
+  .dot.live{background:var(--ok);box-shadow:0 0 8px var(--ok)}
+  .dot.connecting,.dot.retry{background:var(--yellow)}
+  .dot.error{background:var(--err)}
+  .sw{display:flex;align-items:center;gap:8px;margin-top:10px;font-size:14px;cursor:pointer}
+  .sw input{width:auto;accent-color:var(--pink);transform:scale(1.3)}
+  .tag{font-size:11px;padding:1px 6px;border-radius:6px;background:#ffffff14;color:var(--muted);margin-left:4px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>⚙️ แอดมินโดเนท</h1>
+  <div class="sub">SONG SOD Donate <span id="ver">v1.2.2</span> · Overlay ที่เปิดอยู่: <span id="ov">-</span></div>
+
+  <div class="card">
+    <h2>1. รหัสแอดมิน</h2>
+    <input id="key" type="password" placeholder="ADMIN_KEY">
+    <div class="note">จำไว้ในเบราว์เซอร์นี้เท่านั้น</div>
+  </div>
+
+  <div class="card">
+    <h2>⏳ รออนุมัติ <span class="count" id="pCount">0</span></h2>
+    <div class="note" id="pNote" style="margin:0 0 8px">เปิดแอปธนาคารเช็กว่าเงินเข้าจริง แล้วกด <b>อนุมัติ</b> → จะเด้งบนจอทันที (อัปเดตเองทุก 5 วิ)</div>
+    <ul class="pend" id="pList"><li class="t">ใส่รหัสแอดมินก่อน</li></ul>
+  </div>
+
+  <div class="card">
+    <h2>2. ลิงก์สำหรับใช้งาน</h2>
+    <label>ลิงก์โดเนท (แจกคนดู)</label>
+    <div class="url"><input id="uDonate" readonly><button class="ghost" data-copy="uDonate">คัดลอก</button></div>
+    <label>ลิงก์ Overlay (ใส่ใน TikTok LIVE Studio → Link Source หรือ OBS)</label>
+    <div class="url"><input id="uOverlay" readonly><button class="ghost" data-copy="uOverlay">คัดลอก</button></div>
+    <label>ลิงก์อ่านคอมเมนต์ TikTok</label>
+    <div class="url"><input id="uChat" readonly><button class="ghost" data-copy="uChat">คัดลอก</button></div>
+    <label>ลิงก์ขอบคุณคนกดติดตาม</label>
+    <div class="url"><input id="uFollow" readonly><button class="ghost" data-copy="uFollow">คัดลอก</button></div>
+    <div class="note">ใส่แต่ละลิงก์เป็น Link Source แยกกัน หรือใช้ลิงก์รวม <code>/tiktok.html</code> อันเดียวก็ได้</div>
+  </div>
+
+  <div class="card">
+    <h2>🎵 TikTok LIVE</h2>
+    <div class="ttstat"><span class="dot" id="ttDot"></span><span id="ttStatus">ยังไม่เชื่อมต่อ</span></div>
+    <div class="note" id="ttErr" style="margin-top:0"></div>
+    <label>ชื่อผู้ใช้ TikTok (ไม่ต้องใส่ @)</label>
+    <input id="ttUser" placeholder="เช่น del.songsod">
+    <div class="row">
+      <button class="pink" id="ttConnect">เชื่อมต่อ</button>
+      <button class="ghost" id="ttDisconnect">หยุด</button>
+    </div>
+    <label class="sw"><input type="checkbox" id="ttChat"> อ่านคอมเมนต์ออกเสียง</label>
+    <label class="sw"><input type="checkbox" id="ttFollow"> ขอบคุณคนกดติดตาม</label>
+    <div class="row">
+      <button class="ghost" id="ttTestChat">💬 ทดสอบคอมเมนต์</button>
+      <button class="ghost" id="ttTestFollow">💖 ทดสอบติดตาม</button>
+      <button class="ghost" id="ttsCheck">🔊 ตรวจเสียงอ่าน</button>
+    </div>
+    <div class="note" id="ttsResult"></div>
+    <div class="note">กดเชื่อมต่อได้ตั้งแต่ก่อนไลฟ์ ระบบจะลองต่อใหม่เองทุก 1–2 นาทีจนกว่าจะเริ่มไลฟ์ · อ่านแล้ว <span id="ttCount">0</span> คอมเมนต์ / <span id="ttFCount">0</span> ผู้ติดตาม</div>
+  </div>
+
+  <div class="card">
+    <h2>3. ทดสอบแจ้งเตือน</h2>
+    <label>ชื่อ</label><input id="tName" value="คนดูทดสอบ">
+    <label>จำนวนเงิน</label><input id="tAmount" type="number" value="100">
+    <label>ข้อความ</label><input id="tMsg" value="สวัสดีค่ะ ไลฟ์สนุกมากเลย">
+    <div class="row">
+      <button class="pink" id="btnTest">🎉 ยิงทดสอบ</button>
+      <button class="ghost" id="btnSkip">⏭ ข้ามที่กำลังแสดง</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>4. โดเนทล่าสุด</h2>
+    <div class="row" style="margin-top:0;margin-bottom:8px"><button class="ghost" id="btnLoad">รีเฟรช</button></div>
+    <ul id="list"><li class="t">ใส่รหัสแอดมินแล้วกดรีเฟรช</li></ul>
+  </div>
+</div>
+<div class="toast" id="toast"></div>
+
+<script>
+const $ = id => document.getElementById(id);
+const store = {
+  get(k){ try { return localStorage.getItem(k) || ''; } catch { return ''; } },
+  set(k,v){ try { localStorage.setItem(k, v); } catch {} }
+};
+$('key').value = store.get('ssd_admin_key');
+$('key').onchange = () => store.set('ssd_admin_key', $('key').value);
+
+$('uDonate').value = location.origin + '/donate.html';
+$('uOverlay').value = location.origin + '/overlay.html';
+$('uChat').value = location.origin + '/tiktok.html?show=chat';
+$('uFollow').value = location.origin + '/tiktok.html?show=follow';
+
+fetch('/api/config').then(r => r.json()).then(c => {
+  $('ver').textContent = c.version + (c.testMode ? ' (โหมดทดสอบ)' : ' (PromptPay)');
+  if (c.testMode) $('pNote').textContent = 'ตอนนี้เป็นโหมดทดสอบ (ยังไม่ได้ตั้ง PROMPTPAY_ID ใน Render) — โดเนทจะเด้งทันทีโดยไม่ต้องอนุมัติ';
+}).catch(()=>{});
+
+function toast(t){ const el=$('toast'); el.textContent=t; el.style.display='block'; clearTimeout(el._t); el._t=setTimeout(()=>el.style.display='none',2200); }
+
+document.querySelectorAll('[data-copy]').forEach(b => b.onclick = async () => {
+  const v = $(b.dataset.copy).value;
+  try { await navigator.clipboard.writeText(v); toast('คัดลอกแล้ว'); }
+  catch { $(b.dataset.copy).select(); toast('กดค้างเพื่อคัดลอก'); }
+});
+
+async function api(path, opt = {}) {
+  const r = await fetch(path, { ...opt, headers: { 'Content-Type': 'application/json', 'x-admin-key': $('key').value } });
+  const j = await r.json().catch(() => ({ ok: false }));
+  if (!j.ok) throw new Error(j.error || 'ผิดพลาด');
+  return j;
+}
+
+$('btnTest').onclick = async () => {
+  try {
+    await api('/api/test', { method: 'POST', body: JSON.stringify({ name: $('tName').value, amount: Number($('tAmount').value), message: $('tMsg').value }) });
+    toast('ส่งแจ้งเตือนแล้ว 🎉'); load();
+  } catch (e) { toast(e.message); }
+};
+$('btnSkip').onclick = async () => { try { await api('/api/skip', { method: 'POST' }); toast('ข้ามแล้ว'); } catch (e) { toast(e.message); } };
+
+function esc(s){ return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+async function load() {
+  try {
+    const j = await api('/api/recent');
+    $('ov').textContent = j.overlays;
+    $('list').innerHTML = j.items.length ? j.items.map(d =>
+      `<li><b>${esc(d.name)}</b> ${d.amount} บาท<span class="tag">${esc(d.method)}${d.test ? ' · test' : ''}</span><br>${esc(d.message)}<div class="t">${new Date(d.at).toLocaleString('th-TH')}</div></li>`
+    ).join('') : '<li class="t">ยังไม่มีโดเนท</li>';
+  } catch (e) { toast(e.message); }
+}
+$('btnLoad').onclick = load;
+if ($('key').value) load();
+
+// ---------- รออนุมัติ ----------
+let seenPaid = new Set();
+function beep() {
+  try {
+    const ac = new (window.AudioContext || window.webkitAudioContext)();
+    const o = ac.createOscillator(), g = ac.createGain();
+    o.frequency.value = 880; g.gain.value = 0.15;
+    o.connect(g).connect(ac.destination); o.start(); o.stop(ac.currentTime + 0.25);
+  } catch {}
+}
+
+async function loadPending() {
+  if (!$('key').value) return;
+  try {
+    const j = await api('/api/pending');
+    $('pCount').textContent = j.items.length;
+    let newPaid = false;
+    for (const d of j.items) if (d.paid && !seenPaid.has(d.id)) { seenPaid.add(d.id); newPaid = true; }
+    if (newPaid) { beep(); toast('มีคนแจ้งโอนแล้ว 💰'); }
+    $('pList').innerHTML = j.items.length ? j.items.map(d => `
+      <li>
+        <div class="info">
+          <b>${esc(d.name)}</b> ${d.amount.toLocaleString('th-TH', { minimumFractionDigits: 2 })} บาท<br>
+          ${esc(d.message)}
+          <div class="${d.paid ? 'paid' : 'wait'}">${d.paid ? '✅ แจ้งโอนแล้ว' : '⌛ ยังไม่กดแจ้งโอน'} · ${new Date(d.at).toLocaleTimeString('th-TH')}</div>
+        </div>
+        <div class="btns">
+          <button class="ok" data-act="approve" data-id="${d.id}">อนุมัติ</button>
+          <button class="ghost" data-act="reject" data-id="${d.id}">ไม่พบเงิน</button>
+        </div>
+      </li>`).join('') : '<li class="t">ยังไม่มีรายการ</li>';
+  } catch (e) {
+    $('pList').innerHTML = `<li class="t">${esc(e.message)}</li>`;
+  }
+}
+
+$('pList').onclick = async e => {
+  const b = e.target.closest('button[data-act]');
+  if (!b) return;
+  if (b.dataset.act === 'reject' && !confirm('ลบรายการนี้? (จะไม่เด้งบนจอ)')) return;
+  b.disabled = true;
+  try {
+    await api('/api/' + b.dataset.act, { method: 'POST', body: JSON.stringify({ id: b.dataset.id }) });
+    toast(b.dataset.act === 'approve' ? 'อนุมัติแล้ว เด้งบนจอเลย 🎉' : 'ลบรายการแล้ว');
+    loadPending(); load();
+  } catch (err) { toast(err.message); b.disabled = false; }
+};
+
+$('key').addEventListener('change', () => { loadPending(); load(); });
+loadPending();
+setInterval(loadPending, 5000);
+
+// ---------- TikTok LIVE ----------
+const TT_TEXT = { off: 'ยังไม่เชื่อมต่อ', connecting: 'กำลังเชื่อมต่อ…', live: 'เชื่อมต่อไลฟ์แล้ว ✅', retry: 'รอไลฟ์ / กำลังลองใหม่…', error: 'มีปัญหา' };
+let ttUserTouched = false;
+$('ttUser').oninput = () => { ttUserTouched = true; };
+
+async function loadTikTok() {
+  if (!$('key').value) return;
+  try {
+    const j = await api('/api/tiktok/status');
+    $('ttDot').className = 'dot ' + j.status;
+    $('ttStatus').textContent = TT_TEXT[j.status] + (j.username && j.status !== 'off' ? ' · @' + j.username : '');
+    $('ttErr').textContent = j.error || (j.status === 'live' && j.lastEventSec != null
+      ? 'ได้รับข้อมูลจากไลฟ์ล่าสุด ' + j.lastEventSec + ' วิที่แล้ว' + (j.lastEventSec > 120 ? ' ⚠️ ถ้าไลฟ์อยู่แต่ตัวเลขขึ้นเรื่อย ๆ กด "เชื่อมต่อ" ใหม่' : '')
+      : '');
+    if (!ttUserTouched && j.username) $('ttUser').value = j.username;
+    $('ttChat').checked = j.readChat;
+    $('ttFollow').checked = j.readFollow;
+    $('ttCount').textContent = j.counts.chat;
+    $('ttFCount').textContent = j.counts.follow;
+  } catch {}
+}
+
+$('ttConnect').onclick = async () => {
+  try {
+    await api('/api/tiktok/connect', { method: 'POST', body: JSON.stringify({ username: $('ttUser').value }) });
+    ttUserTouched = false; toast('กำลังเชื่อมต่อ…'); setTimeout(loadTikTok, 600);
+  } catch (e) { toast(e.message); }
+};
+$('ttDisconnect').onclick = async () => { try { await api('/api/tiktok/disconnect', { method: 'POST' }); toast('หยุดแล้ว'); loadTikTok(); } catch (e) { toast(e.message); } };
+
+async function ttSettings() {
+  try { await api('/api/tiktok/settings', { method: 'POST', body: JSON.stringify({ readChat: $('ttChat').checked, readFollow: $('ttFollow').checked }) }); toast('บันทึกแล้ว'); }
+  catch (e) { toast(e.message); }
+}
+$('ttChat').onchange = ttSettings;
+$('ttFollow').onchange = ttSettings;
+
+$('ttTestChat').onclick = async () => { try { await api('/api/tiktok/test', { method: 'POST', body: JSON.stringify({ type: 'chat', name: 'คนดูทดสอบ', text: 'สวัสดีค่ะ ไลฟ์สนุกมาก' }) }); toast('ส่งคอมเมนต์ทดสอบแล้ว'); } catch (e) { toast(e.message); } };
+$('ttTestFollow').onclick = async () => { try { await api('/api/tiktok/test', { method: 'POST', body: JSON.stringify({ type: 'follow', name: 'คนดูทดสอบ' }) }); toast('ส่งติดตามทดสอบแล้ว'); } catch (e) { toast(e.message); } };
+
+$('ttsCheck').onclick = async () => {
+  $('ttsResult').textContent = 'กำลังตรวจ…';
+  try {
+    const j = await api('/api/tts-check');
+    $('ttsResult').innerHTML = j.works
+      ? '✅ เซิร์ฟเวอร์ดึงเสียงอ่านภาษาไทยได้ปกติ'
+      : '❌ เซิร์ฟเวอร์ดึงเสียงอ่านไม่ได้ (' + esc(j.error) + ') — ไลฟ์จะใช้เสียงไทยในเครื่องแทน ถ้าเครื่องไม่มีจะไม่อ่าน';
+  } catch (e) { $('ttsResult').textContent = e.message; }
+};
+
+$('key').addEventListener('change', loadTikTok);
+loadTikTok();
+setInterval(loadTikTok, 5000);
+</script>
+</body>
+</html>

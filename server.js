@@ -1,8 +1,9 @@
-// SONG SOD Donate — v1.2.1
+// SONG SOD Donate — v1.2.2
 // หน้าโดเนท + Overlay แจ้งเตือนแบบเรียลไทม์ (Server-Sent Events)
 // v1.1 = QR PromptPay ของเราเอง + แอดมินกดอนุมัติก่อนเด้ง
 //        (ถ้ายังไม่ตั้ง PROMPTPAY_ID จะเป็นโหมดทดสอบเหมือน v1.0)
 // v1.2 = ต่อ TikTok LIVE: อ่านคอมเมนต์ + ขอบคุณคนกดติดตาม (overlay: /tiktok.html)
+// v1.2.2 = ไลฟ์จบ/เริ่มไลฟ์ใหม่ → ต่อห้องใหม่เอง + ตัวเฝ้าระวังถ้าข้อมูลไม่เข้า
 // v1.2.1 = เสียงอ่านเสถียรขึ้น (ลองหลายแบบ + แบ่งข้อความยาว) + ปุ่มตรวจเสียงอ่านในหน้า admin
 // ใช้ Node ล้วน ไม่ต้อง npm install
 
@@ -13,7 +14,7 @@ const crypto = require('crypto');
 const QRCode = require('./vendor/QRCode');                       // ตัวสร้าง QR (MIT)
 const QRErrorCorrectLevel = require('./vendor/QRCode/QRErrorCorrectLevel');
 
-const VERSION = 'v1.2.1';
+const VERSION = 'v1.2.2';
 const PORT = process.env.PORT || 3000;
 const ADMIN_KEY = process.env.ADMIN_KEY || 'changeme';
 // เบอร์โทร (10 หลัก) / เลขบัตรประชาชน (13 หลัก) / e-Wallet ID (15 หลัก) ที่ผูก PromptPay
@@ -117,7 +118,8 @@ const RETRY_MS = 90 * 1000;
 const tt = {
   conn: null, username: TIKTOK_USERNAME, status: 'off', error: '', roomId: null,
   readChat: process.env.READ_CHAT !== 'false', readFollow: process.env.READ_FOLLOW !== 'false',
-  wantOn: false, retry: null, followed: new Set(), lastChat: new Map(), counts: { chat: 0, follow: 0 }
+  wantOn: false, retry: null, followed: new Set(), lastChat: new Map(), counts: { chat: 0, follow: 0 },
+  lastEventAt: 0, connectedAt: 0
 };
 setInterval(() => { const t = Date.now(); for (const [k, v] of tt.lastChat) if (t - v > 60000) tt.lastChat.delete(k); }, 60000);
 
@@ -192,6 +194,17 @@ async function ttConnect(username) {
   conn.on(EV.CHAT || 'chat', onChat);
   conn.on(EV.FOLLOW || 'follow', onFollow);
   conn.on('error', e => console.error('[tiktok]', e?.message || e));
+  // ข้อมูลอะไรก็ได้จากห้องไลฟ์ (คนเข้า, กดหัวใจ, จำนวนคนดู ฯลฯ) = การเชื่อมต่อยังมีชีวิต
+  const alive = () => { if (tt.conn === conn) tt.lastEventAt = Date.now(); };
+  for (const ev of ['chat', 'follow', 'member', 'like', 'roomUser', 'gift', 'social', 'share', 'websocketData']) conn.on(ev, alive);
+  // ไลฟ์จบ → ตัดห้องเก่า แล้วรอต่อห้องใหม่เมื่อเริ่มไลฟ์อีกรอบ
+  conn.on(EV.STREAM_END || 'streamEnd', () => {
+    if (tt.conn !== conn) return;
+    console.log('[tiktok] stream ended — waiting for next LIVE');
+    tt.conn = null; tt.status = 'retry'; tt.error = 'ไลฟ์จบแล้ว — เริ่มไลฟ์ใหม่ระบบจะต่อเองภายใน 1–2 นาที';
+    try { conn.disconnect(); } catch {}
+    scheduleRetry();
+  });
   conn.on('disconnected', () => {
     if (tt.conn !== conn) return;
     tt.conn = null; tt.status = 'retry'; tt.error = 'หลุดการเชื่อมต่อ กำลังลองใหม่…';
@@ -202,6 +215,7 @@ async function ttConnect(username) {
     const st = await conn.connect();
     if (tt.conn !== conn) return;
     tt.status = 'live'; tt.roomId = st?.roomId || null; tt.followed.clear();
+    tt.connectedAt = tt.lastEventAt = Date.now();
     console.log('[tiktok] connected @' + username, tt.roomId);
   } catch (e) {
     if (tt.conn !== conn) return;
@@ -209,6 +223,14 @@ async function ttConnect(username) {
     scheduleRetry();
   }
 }
+
+// ตัวเฝ้าระวัง: ขึ้นว่าเชื่อมต่อแต่ไม่มีข้อมูลจากห้องไลฟ์เลย 3 นาที = น่าจะค้างห้องเก่า → ต่อใหม่
+setInterval(() => {
+  if (tt.status === 'live' && tt.wantOn && Date.now() - tt.lastEventAt > 3 * 60 * 1000) {
+    console.log('[tiktok] no data for 3 min — reconnecting');
+    ttConnect(tt.username);
+  }
+}, 30 * 1000);
 
 // ---------- เสียงอ่านภาษาไทย (Google Translate TTS — ไม่ใช่ API ทางการ) ----------
 const ttsStat = { ok: 0, fail: 0, last: '' };
@@ -417,8 +439,9 @@ const server = http.createServer(async (req, res) => {
 
       // ---- TikTok LIVE ----
       if (m === 'GET' && pathname === '/api/tiktok/status') {
-        const { username, status, error, roomId, readChat, readFollow, counts } = tt;
-        return json(res, 200, { ok: true, username, status, error, roomId, readChat, readFollow, counts });
+        const { username, status, error, roomId, readChat, readFollow, counts, lastEventAt } = tt;
+        const lastEventSec = lastEventAt ? Math.round((Date.now() - lastEventAt) / 1000) : null;
+        return json(res, 200, { ok: true, username, status, error, roomId, readChat, readFollow, counts, lastEventSec });
       }
       if (m === 'POST' && pathname === '/api/tiktok/connect') {
         const b = await readBody(req);
