@@ -1,8 +1,9 @@
-// SONG SOD Donate — v1.2.2
+// SONG SOD Donate — v1.2.3
 // หน้าโดเนท + Overlay แจ้งเตือนแบบเรียลไทม์ (Server-Sent Events)
 // v1.1 = QR PromptPay ของเราเอง + แอดมินกดอนุมัติก่อนเด้ง
 //        (ถ้ายังไม่ตั้ง PROMPTPAY_ID จะเป็นโหมดทดสอบเหมือน v1.0)
 // v1.2 = ต่อ TikTok LIVE: อ่านคอมเมนต์ + ขอบคุณคนกดติดตาม (overlay: /tiktok.html)
+// v1.2.3 = อ่านคอมเมนต์ได้หลายรูปแบบข้อมูล + นับคอมเมนต์ดิบไว้ตรวจปัญหา
 // v1.2.2 = ไลฟ์จบ/เริ่มไลฟ์ใหม่ → ต่อห้องใหม่เอง + ตัวเฝ้าระวังถ้าข้อมูลไม่เข้า
 // v1.2.1 = เสียงอ่านเสถียรขึ้น (ลองหลายแบบ + แบ่งข้อความยาว) + ปุ่มตรวจเสียงอ่านในหน้า admin
 // ใช้ Node ล้วน ไม่ต้อง npm install
@@ -14,7 +15,7 @@ const crypto = require('crypto');
 const QRCode = require('./vendor/QRCode');                       // ตัวสร้าง QR (MIT)
 const QRErrorCorrectLevel = require('./vendor/QRCode/QRErrorCorrectLevel');
 
-const VERSION = 'v1.2.2';
+const VERSION = 'v1.2.3';
 const PORT = process.env.PORT || 3000;
 const ADMIN_KEY = process.env.ADMIN_KEY || 'changeme';
 // เบอร์โทร (10 หลัก) / เลขบัตรประชาชน (13 หลัก) / e-Wallet ID (15 หลัก) ที่ผูก PromptPay
@@ -118,7 +119,7 @@ const RETRY_MS = 90 * 1000;
 const tt = {
   conn: null, username: TIKTOK_USERNAME, status: 'off', error: '', roomId: null,
   readChat: process.env.READ_CHAT !== 'false', readFollow: process.env.READ_FOLLOW !== 'false',
-  wantOn: false, retry: null, followed: new Set(), lastChat: new Map(), counts: { chat: 0, follow: 0 },
+  wantOn: false, retry: null, followed: new Set(), lastChat: new Map(), counts: { chat: 0, follow: 0, rawChat: 0 }, lastRawChat: '',
   lastEventAt: 0, connectedAt: 0
 };
 setInterval(() => { const t = Date.now(); for (const [k, v] of tt.lastChat) if (t - v > 60000) tt.lastChat.delete(k); }, 60000);
@@ -133,13 +134,22 @@ function emitSpeech(type, name, text, speech) {
   broadcast(type, { id, name, text, speech, at: new Date().toISOString() });
 }
 
+// เวอร์ชันต่าง ๆ ของตัวเชื่อม TikTok เก็บข้อความไว้คนละชื่อ
+function chatTextOf(data) {
+  const c = data?.comment ?? data?.content ?? data?.text ?? data?.message ?? data?.chatMessage?.comment ?? '';
+  return typeof c === 'string' ? c : '';
+}
+
 function onChat(data) {
+  tt.counts.rawChat++;
+  tt.lastRawChat = Object.keys(data || {}).slice(0, 12).join(',');   // ไว้ดูว่าข้อมูลหน้าตาแบบไหน
+  if (tt.counts.rawChat <= 3) console.log('[tiktok] chat event keys:', tt.lastRawChat, '| text:', JSON.stringify(chatTextOf(data)).slice(0, 80));
   if (!tt.readChat) return;
   const uid = String(data?.user?.uniqueId || '');
   const now = Date.now();
   if (now - (tt.lastChat.get(uid) || 0) < CHAT_COOLDOWN) return;
   const name = cleanText(data?.user?.nickname || uid, 30) || 'ใครสักคน';
-  const text = cleanText(data?.comment, 100);
+  const text = cleanText(chatTextOf(data), 100);
   if (!speakable(text)) return;                     // ไม่มีอะไรให้อ่าน (เช่น มีแต่คำหยาบ/ลิงก์)
   tt.lastChat.set(uid, now);
   tt.counts.chat++;
@@ -439,9 +449,9 @@ const server = http.createServer(async (req, res) => {
 
       // ---- TikTok LIVE ----
       if (m === 'GET' && pathname === '/api/tiktok/status') {
-        const { username, status, error, roomId, readChat, readFollow, counts, lastEventAt } = tt;
+        const { username, status, error, roomId, readChat, readFollow, counts, lastEventAt, lastRawChat } = tt;
         const lastEventSec = lastEventAt ? Math.round((Date.now() - lastEventAt) / 1000) : null;
-        return json(res, 200, { ok: true, username, status, error, roomId, readChat, readFollow, counts, lastEventSec });
+        return json(res, 200, { ok: true, username, status, error, roomId, readChat, readFollow, counts, lastEventSec, lastRawChat });
       }
       if (m === 'POST' && pathname === '/api/tiktok/connect') {
         const b = await readBody(req);

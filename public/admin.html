@@ -52,7 +52,7 @@
 <body>
 <div class="wrap">
   <h1>⚙️ แอดมินโดเนท</h1>
-  <div class="sub">SONG SOD Donate <span id="ver">v1.2.1</span> · Overlay ที่เปิดอยู่: <span id="ov">-</span></div>
+  <div class="sub">SONG SOD Donate <span id="ver">v1.2.3</span> · Overlay ที่เปิดอยู่: <span id="ov">-</span></div>
 
   <div class="card">
     <h2>1. รหัสแอดมิน</h2>
@@ -97,7 +97,7 @@
       <button class="ghost" id="ttsCheck">🔊 ตรวจเสียงอ่าน</button>
     </div>
     <div class="note" id="ttsResult"></div>
-    <div class="note">กดเชื่อมต่อได้ตั้งแต่ก่อนไลฟ์ ระบบจะลองต่อใหม่เองทุก 1–2 นาทีจนกว่าจะเริ่มไลฟ์ · อ่านแล้ว <span id="ttCount">0</span> คอมเมนต์ / <span id="ttFCount">0</span> ผู้ติดตาม</div>
+    <div class="note">กดเชื่อมต่อได้ตั้งแต่ก่อนไลฟ์ ระบบจะลองต่อใหม่เองทุก 1–2 นาทีจนกว่าจะเริ่มไลฟ์ · อ่านแล้ว <span id="ttCount">0</span> คอมเมนต์ / <span id="ttFCount">0</span> ผู้ติดตาม · คอมเมนต์ที่ TikTok ส่งมา <span id="ttRaw">0</span></div>
   </div>
 
   <div class="card">
@@ -238,12 +238,15 @@ async function loadTikTok() {
     const j = await api('/api/tiktok/status');
     $('ttDot').className = 'dot ' + j.status;
     $('ttStatus').textContent = TT_TEXT[j.status] + (j.username && j.status !== 'off' ? ' · @' + j.username : '');
-    $('ttErr').textContent = j.error || '';
+    $('ttErr').textContent = j.error || (j.status === 'live' && j.lastEventSec != null
+      ? 'ได้รับข้อมูลจากไลฟ์ล่าสุด ' + j.lastEventSec + ' วิที่แล้ว' + (j.lastEventSec > 120 ? ' ⚠️ ถ้าไลฟ์อยู่แต่ตัวเลขขึ้นเรื่อย ๆ กด "เชื่อมต่อ" ใหม่' : '')
+      : '');
     if (!ttUserTouched && j.username) $('ttUser').value = j.username;
     $('ttChat').checked = j.readChat;
     $('ttFollow').checked = j.readFollow;
     $('ttCount').textContent = j.counts.chat;
     $('ttFCount').textContent = j.counts.follow;
+    $('ttRaw').textContent = j.counts.rawChat ?? 0;
   } catch {}
 }
 
